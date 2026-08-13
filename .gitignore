@@ -1,0 +1,12 @@
+# Ignore all Claude-related workspace folders anywhere in the project
+**/claude/
+**/.claude/
+
+# Ignore specific Claude project or artifact folders
+claude-app/
+claude_app/
+.claude-settings/
+
+# Ignore Claude desktop app configurations or exported logs
+*.claude
+claude.log

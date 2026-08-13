@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+<title>Pickleball Open Play</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏓</text></svg>" />
+<link rel="stylesheet" href="css/style.css?v=6" />
+</head>
+<body>
+<header class="app-header no-print">
+  <div class="brand">
+    <span class="brand-icon" aria-hidden="true">🏓</span>
+    <h1>Pickleball Open Play</h1>
+  </div>
+</header>
+
+<div class="app">
+  <main>
+    <!-- ================= SETUP VIEW ================= -->
+    <section id="setup-view" class="view">
+      <form id="setup-form" novalidate>
+        <div class="card">
+          <h2>Session Setup</h2>
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">Number of Players</span>
+              <input type="number" id="input-players" min="1" step="1" value="8" required />
+            </label>
+            <label class="field">
+              <span class="field-label">Number of Courts</span>
+              <input type="number" id="input-courts" min="1" step="1" value="2" required />
+            </label>
+            <div class="field match-type-field">
+              <span class="field-label">Match Type</span>
+              <div class="segmented" id="match-type-toggle">
+                <button type="button" class="segmented-btn active" data-value="doubles">Doubles</button>
+                <button type="button" class="segmented-btn" data-value="singles">Singles</button>
+              </div>
+            </div>
+          </div>
+          <div class="calc-preview" id="calc-preview" aria-live="polite"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header-row">
+            <h2>Player Names</h2>
+            <span class="hint">Required for every player</span>
+          </div>
+          <div id="player-name-inputs" class="player-name-grid"></div>
+        </div>
+
+        <div id="setup-errors" class="error-list" hidden></div>
+
+        <button type="submit" class="btn btn-primary btn-large" id="generate-btn">Generate Queue</button>
+      </form>
+    </section>
+
+    <!-- ================= SESSION VIEW ================= -->
+    <section id="session-view" class="view" hidden>
+
+      <div class="print-header">
+        <h1>Pickleball Match History</h1>
+        <div class="print-info">
+          <div class="print-info-row"><span class="print-info-label">Courts</span><span id="print-courts"></span></div>
+          <div class="print-info-row"><span class="print-info-label">Players (<span id="print-player-count"></span>)</span><span id="print-player-names"></span></div>
+        </div>
+      </div>
+
+      <div class="card session-header-card no-print dash-full" id="session-header-card">
+        <h2>Pickleball Open Play</h2>
+        <div class="session-meta" id="session-meta"></div>
+      </div>
+
+      <h2 class="section-title no-print dash-full" id="courts-heading">Currently Playing</h2>
+      <div class="courts-grid no-print dash-full" id="courts-grid"></div>
+
+      <div class="card no-print" id="waiting-card">
+        <h3>Waiting Queue</h3>
+        <ol class="waiting-list" id="waiting-list"></ol>
+      </div>
+
+      <details class="card details-card no-print" id="stats-card" open>
+        <summary class="details-summary">
+          <h2>Player Statistics</h2>
+          <span class="details-chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <div class="details-body">
+          <div class="table-wrap">
+            <table class="stats-table" id="stats-table">
+              <thead>
+                <tr>
+                  <th>Player</th>
+                  <th>Games</th>
+                  <th>Wins</th>
+                  <th>Losses</th>
+                  <th>Win Rate</th>
+                </tr>
+              </thead>
+              <tbody id="stats-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="card details-card dash-full" id="history-card" open>
+        <summary class="details-summary">
+          <h2>Match History</h2>
+          <span class="details-chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <div class="details-body">
+          <div class="history-actions no-print">
+            <button type="button" class="btn btn-ghost" id="btn-export-pdf">🖨 Export PDF</button>
+            <button type="button" class="btn btn-danger-ghost" id="btn-clear-history">Clear History</button>
+          </div>
+          <div id="history-list" class="history-list"></div>
+        </div>
+      </details>
+
+      <div class="controls-bar no-print dash-full">
+        <button type="button" class="btn btn-danger-ghost" id="btn-reset">Reset Session</button>
+      </div>
+
+    </section>
+  </main>
+</div>
+
+<script src="js/scheduler.js?v=6"></script>
+<script src="js/queue.js?v=6"></script>
+<script src="js/storage.js?v=6"></script>
+<script src="js/app.js?v=6"></script>
+</body>
+</html>
