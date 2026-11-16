@@ -3,131 +3,281 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#F3EDF7" />
 <title>Pickleball Open Play</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏓</text></svg>" />
-<link rel="stylesheet" href="css/style.css?v=6" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
+<link rel="stylesheet" href="css/style.css?v=43" />
 </head>
 <body>
 <header class="app-header no-print">
-  <div class="brand">
-    <span class="brand-icon" aria-hidden="true">🏓</span>
-    <h1>Pickleball Open Play</h1>
+  <div class="header-inner">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+        <!-- Paddle: face, edge guard, throat and grip share ONE rotation so they stay aligned -->
+        <g transform="rotate(35 20 24)">
+          <rect x="11" y="4" width="18" height="22" rx="6.5" fill="#6F527F" />
+          <rect x="13.5" y="6.5" width="13" height="17" rx="4.4" fill="none" stroke="#A489B8" stroke-width="1.2" />
+          <rect x="18" y="25" width="4" height="4" fill="#5C4369" />
+          <rect x="17" y="28" width="6" height="13" rx="3" fill="#33283B" />
+        </g>
+        <!-- Ball -->
+        <circle cx="36" cy="35.5" r="7.5" fill="#F7D774" stroke="#D9A93A" stroke-width="1" />
+        <circle cx="33.4" cy="33" r="1.1" fill="#C9962A" /><circle cx="38.6" cy="33" r="1.1" fill="#C9962A" />
+        <circle cx="36" cy="35.5" r="1.1" fill="#C9962A" />
+        <circle cx="33.4" cy="38" r="1.1" fill="#C9962A" /><circle cx="38.6" cy="38" r="1.1" fill="#C9962A" />
+      </svg>
+      <div class="brand-text">
+        <h1>Pickleball Open Play</h1>
+        <p class="brand-tagline">Play · Compete · Enjoy!</p>
+      </div>
+    </div>
+
+    <!-- Session summary card + its collapse toggle (toggle shown on phones only) -->
+    <div class="summary-bar">
+      <div class="summary-chips" id="session-meta" aria-label="Session summary" hidden></div>
+      <button type="button" class="chips-toggle" id="btn-chips-toggle" aria-controls="session-meta" aria-expanded="true" aria-label="Hide session summary" title="Hide session summary">
+        <span class="chips-toggle-text" id="chips-summary-text"></span>
+        <span class="chips-toggle-icon" data-icon="chevronDown"></span>
+      </button>
+    </div>
+
+    <a class="sponsor" href="https://www.facebook.com/share/19PkqEfUcM/?mibextid=wwXIfr" target="_blank" rel="noopener noreferrer" title="Visit Pickle sa Balay on Facebook" aria-label="Sponsored by Pickle sa Balay. Opens their Facebook page in a new tab">
+      <span class="sponsor-label">Sponsored by</span>
+      <img class="sponsor-logo" src="img/pickle-sa-balay.webp" alt="Pickle sa Balay" width="640" height="298" />
+    </a>
   </div>
 </header>
 
 <div class="app">
   <main>
     <!-- ================= SETUP VIEW ================= -->
-    <section id="setup-view" class="view">
-      <form id="setup-form" novalidate>
-        <div class="card">
-          <h2>Session Setup</h2>
-          <div class="field-grid">
-            <label class="field">
-              <span class="field-label">Number of Players</span>
-              <input type="number" id="input-players" min="1" step="1" value="8" required />
-            </label>
-            <label class="field">
-              <span class="field-label">Number of Courts</span>
-              <input type="number" id="input-courts" min="1" step="1" value="2" required />
-            </label>
-            <div class="field match-type-field">
-              <span class="field-label">Match Type</span>
-              <div class="segmented" id="match-type-toggle">
-                <button type="button" class="segmented-btn active" data-value="doubles">Doubles</button>
-                <button type="button" class="segmented-btn" data-value="singles">Singles</button>
+    <section id="setup-view" class="view setup-view">
+      <form id="setup-form" class="setup-layout" novalidate>
+        <div class="setup-intro">
+          <span class="setup-eyebrow">New session</span>
+          <h2>Set up today’s open play</h2>
+          <p>Choose players and courts, enter everyone’s name, then generate the queue.</p>
+        </div>
+
+        <!-- Left column on desktop (sticky): settings, errors, generate -->
+        <aside class="setup-side">
+          <div class="panel setup-config">
+            <div class="panel-head">
+              <h2 class="panel-title"><span class="panel-icon" data-icon="settings"></span>Session Setup</h2>
+            </div>
+
+            <div class="stepper-grid">
+              <div class="field">
+                <label class="field-label" for="input-players">Players</label>
+                <div class="stepper">
+                  <button type="button" class="stepper-btn" data-step="-1" data-target="input-players" aria-label="Fewer players"><span data-icon="minus"></span></button>
+                  <input type="number" id="input-players" min="1" max="500" step="1" value="8" inputmode="numeric" required />
+                  <button type="button" class="stepper-btn" data-step="1" data-target="input-players" aria-label="More players"><span data-icon="plus"></span></button>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label" for="input-courts">Courts</label>
+                <div class="stepper">
+                  <button type="button" class="stepper-btn" data-step="-1" data-target="input-courts" aria-label="Fewer courts"><span data-icon="minus"></span></button>
+                  <input type="number" id="input-courts" min="1" max="50" step="1" value="2" inputmode="numeric" required />
+                  <button type="button" class="stepper-btn" data-step="1" data-target="input-courts" aria-label="More courts"><span data-icon="plus"></span></button>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="calc-preview" id="calc-preview" aria-live="polite"></div>
-        </div>
 
-        <div class="card">
-          <div class="card-header-row">
-            <h2>Player Names</h2>
-            <span class="hint">Required for every player</span>
+            <div class="field match-type-field">
+              <span class="field-label">Match Type</span>
+              <div class="segmented segmented-cards" id="match-type-toggle">
+                <button type="button" class="segmented-btn active" data-value="doubles">
+                  <span class="seg-icon" data-icon="users"></span>
+                  <span class="seg-text"><strong>Doubles</strong><small>4 per court</small></span>
+                </button>
+                <button type="button" class="segmented-btn" data-value="singles">
+                  <span class="seg-icon" data-icon="user"></span>
+                  <span class="seg-text"><strong>Singles</strong><small>2 per court</small></span>
+                </button>
+              </div>
+            </div>
+
+            <div class="calc-preview" id="calc-preview" aria-live="polite"></div>
           </div>
+
+          <div id="setup-errors" class="error-list" hidden></div>
+
+          <div class="setup-actions">
+            <div class="setup-status" id="setup-status" aria-live="polite"></div>
+            <button type="submit" class="btn btn-primary btn-large" id="generate-btn"><span data-icon="play"></span>Generate Queue</button>
+          </div>
+        </aside>
+
+        <!-- Right column on desktop: player names -->
+        <div class="panel setup-names">
+          <div class="panel-head">
+            <h2 class="panel-title"><span class="panel-icon" data-icon="users"></span>Player Names</h2>
+            <span class="badge badge-lavender" id="names-count"></span>
+          </div>
+          <div class="names-progress" aria-hidden="true"><span id="names-progress-bar"></span></div>
+          <p class="hint names-hint">Every player needs a unique name. Duplicates are highlighted as you type.</p>
           <div id="player-name-inputs" class="player-name-grid"></div>
         </div>
-
-        <div id="setup-errors" class="error-list" hidden></div>
-
-        <button type="submit" class="btn btn-primary btn-large" id="generate-btn">Generate Queue</button>
       </form>
     </section>
 
     <!-- ================= SESSION VIEW ================= -->
-    <section id="session-view" class="view" hidden>
+    <section id="session-view" class="view dashboard" hidden>
+
+      <!-- PDF-only background watermark (repeated on every printed page) -->
+      <img class="print-watermark" src="img/pickle-sa-balay-badge.webp" alt="" aria-hidden="true" width="1200" height="1200" />
 
       <div class="print-header">
-        <h1>Pickleball Match History</h1>
+        <div class="print-title-row">
+          <h1>Pickleball Match History</h1>
+          <a class="print-sponsor" href="https://www.facebook.com/share/19PkqEfUcM/?mibextid=wwXIfr" target="_blank" rel="noopener noreferrer" title="Visit Pickle sa Balay on Facebook">
+            <span>Sponsored by</span>
+            <img src="img/pickle-sa-balay.webp" alt="Pickle sa Balay" width="640" height="298" />
+          </a>
+        </div>
         <div class="print-info">
           <div class="print-info-row"><span class="print-info-label">Courts</span><span id="print-courts"></span></div>
-          <div class="print-info-row"><span class="print-info-label">Players (<span id="print-player-count"></span>)</span><span id="print-player-names"></span></div>
-        </div>
-      </div>
-
-      <div class="card session-header-card no-print dash-full" id="session-header-card">
-        <h2>Pickleball Open Play</h2>
-        <div class="session-meta" id="session-meta"></div>
-      </div>
-
-      <h2 class="section-title no-print dash-full" id="courts-heading">Currently Playing</h2>
-      <div class="courts-grid no-print dash-full" id="courts-grid"></div>
-
-      <div class="card no-print" id="waiting-card">
-        <h3>Waiting Queue</h3>
-        <ol class="waiting-list" id="waiting-list"></ol>
-      </div>
-
-      <details class="card details-card no-print" id="stats-card" open>
-        <summary class="details-summary">
-          <h2>Player Statistics</h2>
-          <span class="details-chevron" aria-hidden="true">⌄</span>
-        </summary>
-        <div class="details-body">
-          <div class="table-wrap">
-            <table class="stats-table" id="stats-table">
-              <thead>
-                <tr>
-                  <th>Player</th>
-                  <th>Games</th>
-                  <th>Wins</th>
-                  <th>Losses</th>
-                  <th>Win Rate</th>
-                </tr>
-              </thead>
-              <tbody id="stats-body"></tbody>
-            </table>
+          <div class="print-info-row print-info-block">
+            <span class="print-info-label">Players (<span id="print-player-count"></span>)</span>
+            <ol class="print-players" id="print-player-names"></ol>
           </div>
         </div>
-      </details>
+      </div>
 
-      <details class="card details-card dash-full" id="history-card" open>
-        <summary class="details-summary">
-          <h2>Match History</h2>
-          <span class="details-chevron" aria-hidden="true">⌄</span>
+      <!-- Currently playing: the most important area -->
+      <section class="panel panel-courts no-print" aria-labelledby="courts-heading">
+        <div class="panel-head">
+          <h2 class="panel-title" id="courts-heading"><span class="panel-icon" data-icon="play"></span>Currently Playing</h2>
+          <span class="badge badge-success"><span class="badge-dot"></span>Session Active</span>
+        </div>
+        <div class="courts-grid" id="courts-grid"></div>
+      </section>
+
+      <div class="dash-row no-print">
+        <!-- Waiting queue -->
+        <section class="panel panel-queue" id="waiting-card" aria-labelledby="queue-heading">
+          <div class="panel-head">
+            <h2 class="panel-title" id="queue-heading"><span class="panel-icon" data-icon="users"></span>Waiting Queue</h2>
+            <button type="button" class="link-btn" id="btn-reset-order" hidden>Reset to automatic</button>
+          </div>
+          <p class="queue-mode" id="queue-mode"></p>
+          <div class="queue" id="waiting-list"></div>
+        </section>
+
+        <!-- Player statistics -->
+        <details class="panel details-panel panel-stats" id="stats-card" open>
+          <summary class="panel-head details-summary">
+            <h2 class="panel-title"><span class="panel-icon" data-icon="chart"></span>Player Statistics</h2>
+            <span class="details-toggle"><span class="details-toggle-text"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
+          </summary>
+          <div class="details-body">
+            <div class="table-wrap">
+              <table class="stats-table" id="stats-table">
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>Games</th>
+                    <th>Wins</th>
+                    <th>Losses</th>
+                    <th>Win Rate</th>
+                  </tr>
+                </thead>
+                <tbody id="stats-body"></tbody>
+              </table>
+            </div>
+            <div class="stats-cards" id="stats-cards"></div>
+          </div>
+        </details>
+
+        <!-- Player management -->
+        <details class="panel details-panel panel-players" id="players-card" open>
+          <summary class="panel-head details-summary">
+            <h2 class="panel-title"><span class="panel-icon" data-icon="userCog"></span>Player Management</h2>
+            <span class="details-toggle"><span class="badge badge-neutral" id="pm-count"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
+          </summary>
+          <div class="details-body">
+            <p class="hint pm-hint" id="pm-hint"></p>
+            <ul class="pm-list" id="pm-list"></ul>
+          </div>
+        </details>
+      </div>
+
+      <!-- Match history (also the printable part) -->
+      <details class="panel details-panel panel-history" id="history-card" open>
+        <summary class="panel-head details-summary">
+          <h2 class="panel-title"><span class="panel-icon" data-icon="clock"></span>Match History</h2>
+          <span class="details-toggle"><span class="details-chevron" data-icon="chevronDown"></span></span>
         </summary>
         <div class="details-body">
           <div class="history-actions no-print">
-            <button type="button" class="btn btn-ghost" id="btn-export-pdf">🖨 Export PDF</button>
-            <button type="button" class="btn btn-danger-ghost" id="btn-clear-history">Clear History</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-export-pdf"><span data-icon="printer"></span>Export PDF</button>
+            <button type="button" class="btn btn-danger-ghost btn-sm" id="btn-clear-history"><span data-icon="trash"></span>Clear History</button>
           </div>
           <div id="history-list" class="history-list"></div>
+
+          <!-- PDF-only list view of the same history (cards are used on screen) -->
+          <table class="history-print" aria-hidden="true">
+            <thead>
+              <tr>
+                <th class="hp-num">#</th>
+                <th class="hp-time">Time</th>
+                <th class="hp-court">Court</th>
+                <th>Team 1</th>
+                <th>Team 2</th>
+                <th>Winner</th>
+                <th class="hp-score">Score</th>
+              </tr>
+            </thead>
+            <tbody id="history-print-body"></tbody>
+          </table>
         </div>
       </details>
 
-      <div class="controls-bar no-print dash-full">
-        <button type="button" class="btn btn-danger-ghost" id="btn-reset">Reset Session</button>
-      </div>
+      <!-- Destructive session controls, kept apart from everyday actions -->
+      <section class="panel panel-danger no-print" aria-labelledby="session-controls-heading">
+        <div class="danger-text">
+          <h2 class="panel-title" id="session-controls-heading"><span class="panel-icon" data-icon="alert"></span>Session</h2>
+          <p class="hint">Reset Session clears all players, courts, stats and match history, then returns to setup.</p>
+        </div>
+        <button type="button" class="btn btn-danger" id="btn-reset"><span data-icon="reset"></span>Reset Session</button>
+      </section>
 
     </section>
   </main>
 </div>
 
-<script src="js/scheduler.js?v=6"></script>
-<script src="js/queue.js?v=6"></script>
-<script src="js/storage.js?v=6"></script>
-<script src="js/app.js?v=6"></script>
+<!-- Shared modal for player management, swaps and pairing edits -->
+<dialog id="modal" class="modal no-print" aria-labelledby="modal-title">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="modal-title"></h2>
+      <button type="button" class="modal-x" id="modal-x" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="error-list modal-error" id="modal-error" role="alert" hidden></div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" id="modal-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="modal-save">Save Changes</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Appears after scrolling down a long page -->
+<button type="button" class="to-top no-print" id="btn-to-top" aria-label="Back to top" title="Back to top" tabindex="-1"><span data-icon="arrowUp"></span></button>
+
+<!-- Short notices (e.g. "Updated with changes made in another tab") -->
+<div class="toast no-print" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="js/icons.js?v=43"></script>
+<script src="js/scheduler.js?v=43"></script>
+<script src="js/queue.js?v=43"></script>
+<script src="js/storage.js?v=43"></script>
+<script src="js/session.js?v=43"></script>
+<script src="js/app.js?v=43"></script>
 </body>
 </html>
