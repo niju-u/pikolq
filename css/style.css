@@ -136,61 +136,14 @@ body { padding-top: var(--header-h, 88px); }
   .app-header.is-condensed .summary-bar { display: none; }
 }
 
-/* Summary collapse toggle: phones only, during a session */
-.chips-toggle { display: none; }
-.chips-toggle-text { display: none; }
-
 @media (max-width: 767px) {
-  /* Row 1: logo + title, sponsor in the top-right corner.
-     Row 2: the summary bar = chips + collapse toggle (or the slim collapsed line). */
+  /* Row 1: logo + title, sponsor in the top-right corner. Row 2: summary chips. */
   .header-inner > .brand { order: 1; flex: 1 1 auto; }
   .header-inner > .sponsor { order: 2; margin-left: auto; }
   .brand h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .header-inner > .summary-bar { order: 3; flex: 1 1 100%; gap: 6px; align-items: stretch; }
+  .header-inner > .summary-bar { order: 3; flex: 1 1 100%; }
   .summary-bar > .summary-chips { flex: 1 1 auto; }
   body:not(.is-session) .summary-bar { display: none; }
-
-  body.is-session .chips-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 36px;
-    flex: 0 0 36px;
-    align-self: stretch;
-    min-height: 36px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--white);
-    color: var(--plum);
-    cursor: pointer;
-    box-shadow: var(--shadow-sm);
-    font: inherit;
-  }
-  .chips-toggle-icon { display: grid; place-items: center; }
-  .chips-toggle-icon .icon { width: 18px; height: 18px; transition: transform 0.2s ease; transform: rotate(180deg); }
-
-  /* Collapsed: chips hidden, the toggle becomes one slim full-width summary line */
-  .app-header.chips-collapsed .summary-chips { display: none !important; }
-  body.is-session .app-header.chips-collapsed .chips-toggle {
-    flex: 1 1 100%;
-    width: auto;
-    justify-content: space-between;
-    padding: 6px 10px 6px 12px;
-    min-height: 34px;
-  }
-  .app-header.chips-collapsed .chips-toggle-text {
-    display: block;
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-  }
-  .app-header.chips-collapsed .chips-toggle-icon .icon { transform: none; }
 
   /* Pinned + scrolled: compact chips (no icons) so values and labels fit */
   .app-header.is-condensed .summary-chips { gap: 5px; }
@@ -198,6 +151,19 @@ body { padding-top: var(--header-h, 88px); }
   .app-header.is-condensed .summary-icon { display: none; }
   .app-header.is-condensed .summary-text strong { font-size: 0.82rem; }
   .app-header.is-condensed .summary-text span { font-size: 0.56rem; }
+}
+
+/* ---------- Rendering performance ----------
+   Let the browser skip layout/paint for cards that are off-screen (long
+   histories, big player lists). The intrinsic sizes are estimates used only
+   for the scrollbar until a card is actually drawn. */
+.history-card { content-visibility: auto; contain-intrinsic-size: auto 132px; }
+.pm-card { content-visibility: auto; contain-intrinsic-size: auto 78px; }
+.stat-card { content-visibility: auto; contain-intrinsic-size: auto 96px; }
+.stats-table tbody tr { content-visibility: auto; contain-intrinsic-size: auto 38px; }
+
+@media print {
+  .history-card, .pm-card, .stat-card, .stats-table tbody tr { content-visibility: visible; }
 }
 
 /* ---------- Toast notice ---------- */
@@ -1106,7 +1072,48 @@ main {
 .stat-more[open] summary .icon { transform: rotate(180deg); }
 
 /* ---------- Player management ---------- */
-.pm-hint { margin-bottom: 12px; }
+.pm-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.pm-hint { margin: 0; flex: 1 1 220px; }
+.pm-toolbar .btn .icon { width: 16px; height: 16px; }
+
+.pm-restore {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-height: 34px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+}
+.pm-restore .icon { width: 14px; height: 14px; }
+.pm-card.is-removed:has(.pm-restore) { padding-right: 100px; }
+
+.field textarea {
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--r-md);
+  padding: 11px 12px;
+  font: inherit;
+  font-size: 1rem;
+  background: var(--lav-25);
+  color: var(--text);
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+}
+.field textarea:focus { outline: none; border-color: var(--primary); background: var(--white); box-shadow: var(--focus); }
+.field-label-note { font-weight: 500; color: var(--text-2); }
+
+@media (max-width: 767px) {
+  #btn-add-players { width: 100%; min-height: 44px; }
+}
 
 .pm-list {
   display: grid;
@@ -1130,7 +1137,10 @@ main {
 .pm-card:hover { box-shadow: var(--shadow-sm); }
 .pm-card.is-playing { border-left-color: #6FC092; }
 .pm-card.is-waiting { border-left-color: var(--primary); }
-.pm-card.is-removed { opacity: 0.6; border-left-style: dashed; }
+.pm-card.is-removed { border-left-style: dashed; background: var(--lav-25); }
+.pm-card.is-removed .pm-name,
+.pm-card.is-removed .pm-meta,
+.pm-card.is-removed .pm-partner { opacity: 0.6; }
 .pm-card.is-removed .pm-name { text-decoration: line-through; }
 
 .pm-top { min-width: 0; }
@@ -1587,7 +1597,11 @@ main {
   list-style: none;
   margin: 0;
   padding: 0;
-  column-count: var(--cols, 3);
+  /* Grid filled column by column; --cols / --rows are set from JS */
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--rows, 1), auto);
+  grid-auto-flow: column;
   column-gap: 22px;
 }
 
@@ -1613,6 +1627,8 @@ main {
 }
 
 .print-players .pp-name { color: #222; overflow-wrap: anywhere; }
+.print-players .pp-note { font-size: 7.5pt; color: #888; }
+.print-players li.is-left .pp-name { color: #777; font-style: italic; }
 
 /* ---------- Setup view (session setup screen) ---------- */
 .setup-view {
@@ -2071,14 +2087,12 @@ main {
      browser repeat it on each printed page; content sits above it. */
   .print-watermark {
     display: block;
+    /* centred on the paper itself: no screen-width units (a phone's screen is ~375px) */
     position: fixed;
-    top: 50%;
-    left: 50%;
+    inset: 0;
+    margin: auto;
     width: 16.5cm;
     height: 16.5cm;
-    max-width: 92vw;
-    max-height: 92vw;
-    transform: translate(-50%, -50%);
     opacity: 0.1;
     z-index: 0;
     pointer-events: none;

@@ -125,6 +125,8 @@ const App = (() => {
       p.queueGames = int(p.queueGames, p.gamesPlayed);
       if (!Number.isInteger(p.lastCourtId)) p.lastCourtId = null;
       p.teammates = obj(p.teammates);
+      p.name = Scheduler.normalizeName(p.name) || p.name; // capitalize names from older saves
+      ['joinedAt', 'leftAt', 'rejoinedAt'].forEach(k => { if (typeof p[k] !== 'string') delete p[k]; });
       p.opponents = obj(p.opponents);
     });
 
@@ -143,8 +145,8 @@ const App = (() => {
           courtId: Number.isInteger(h.courtId) ? h.courtId : 0,
           team1Score: both ? t1 : null,
           team2Score: both ? t2 : null,
-          team1Names: Array.isArray(h.team1Names) ? h.team1Names : undefined,
-          team2Names: Array.isArray(h.team2Names) ? h.team2Names : undefined,
+          team1Names: Array.isArray(h.team1Names) ? h.team1Names.map(n => (typeof n === 'string' ? Scheduler.normalizeName(n) || n : n)) : undefined,
+          team2Names: Array.isArray(h.team2Names) ? h.team2Names.map(n => (typeof n === 'string' ? Scheduler.normalizeName(n) || n : n)) : undefined,
           manual: !!h.manual,
         });
       });
@@ -228,6 +230,19 @@ const App = (() => {
     el.modalCancel = document.getElementById('modal-cancel');
     el.modalX = document.getElementById('modal-x');
     el.toast = document.getElementById('toast');
+    el.statsHead = document.getElementById('stats-table').querySelector('thead tr');
+
+    // Sections redrawn on every change get a cached `.html` setter: the DOM is
+    // only touched when the markup actually changed (keeps big sessions fast).
+    [el.sessionMeta, el.printPlayerNames, el.courtsGrid, el.queueMode, el.waitingList,
+      el.pmList, el.statsBody, el.statsHead, el.statsCards, el.historyList].forEach(node => {
+      let last = null;
+      Object.defineProperty(node, 'html', {
+        configurable: true,
+        get: () => last,
+        set: v => { if (v !== last) { last = v; node.innerHTML = v; } },
+      });
+    });
     el.header = document.querySelector('.app-header');
   }
 
@@ -251,6 +266,24 @@ const App = (() => {
       saveDraftFromForm();
       updateNameStatus();
     });
+    // Capitalize a name once the organizer leaves the field ("maria christine" -> "Maria Christine")
+    el.playerNameGrid.addEventListener('focusout', e => {
+      const input = e.target.closest('.player-name-input');
+      if (!input) return;
+      const formatted = Scheduler.normalizeName(input.value);
+      if (formatted !== input.value) {
+        input.value = formatted;
+        saveDraftFromForm();
+        updateNameStatus();
+      }
+    });
+    el.modalBody.addEventListener('focusout', e => {
+      if (e.target.id === 'm-name') {
+        e.target.value = Scheduler.normalizeName(e.target.value);
+      } else if (e.target.id === 'm-new-names') {
+        e.target.value = e.target.value.split(/\r?\n/).map(line => Scheduler.normalizeName(line)).join('\n');
+      }
+    });
     el.form.addEventListener('click', onStepperClick);
     el.form.addEventListener('submit', onGenerateQueue);
 
@@ -269,23 +302,6 @@ const App = (() => {
     }
     window.addEventListener('resize', syncHeaderSpace, { passive: true });
 
-    // Phones: the summary chips stay pinned with the header; this toggle
-    // collapses/expands them and the choice is remembered on this device.
-    const chipsToggle = document.getElementById('btn-chips-toggle');
-    const setChipsCollapsed = collapsed => {
-      header.classList.toggle('chips-collapsed', collapsed);
-      chipsToggle.setAttribute('aria-expanded', String(!collapsed));
-      const label = collapsed ? 'Show session summary' : 'Hide session summary';
-      chipsToggle.setAttribute('aria-label', label);
-      chipsToggle.title = label;
-    };
-    setChipsCollapsed(Storage.getPref('chipsCollapsed') === '1');
-    chipsToggle.addEventListener('click', () => {
-      const collapsed = !header.classList.contains('chips-collapsed');
-      setChipsCollapsed(collapsed);
-      Storage.setPref('chipsCollapsed', collapsed ? '1' : '0');
-      syncHeaderSpace();
-    });
     // Only touch the DOM when the state actually changes.
     const syncScroll = () => {
       const y = window.scrollY;
@@ -319,9 +335,13 @@ const App = (() => {
       commitChange();
     });
     el.pmList.addEventListener('click', e => {
-      const btn = e.target.closest('[data-action="manage-player"]');
-      if (btn) openManagePlayerModal(parseInt(btn.dataset.playerId, 10));
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const id = parseInt(btn.dataset.playerId, 10);
+      if (btn.dataset.action === 'manage-player') openManagePlayerModal(id);
+      else if (btn.dataset.action === 'restore-player') onRestorePlayer(id);
     });
+    document.getElementById('btn-add-players').addEventListener('click', openAddPlayersModal);
 
     el.btnExportPdf.addEventListener('click', exportPdf);
     el.btnClearHistory.addEventListener('click', onClearHistory);
@@ -562,7 +582,7 @@ const App = (() => {
 
   function generateMatchForCourt(court) {
     const busyIds = getBusyPlayerIds();
-    const plan = Queue.generateMatch(state.players, busyIds, state.config.matchType, state.matchSeq, state.waitOverride);
+    const plan = Queue.generateMatch(state.players, busyIds, state.config.matchType, state.matchSeq, state.waitOverride, state.nextMatchId);
     if (!plan) {
       court.activeMatch = null;
       court.idleReason = 'Waiting for enough players to free up.';
@@ -734,7 +754,9 @@ const App = (() => {
     const btn = e.target.closest('[data-move]');
     if (!btn) return;
     const id = parseInt(btn.dataset.playerId, 10);
-    if (Session.moveWaiting(state, id, parseInt(btn.dataset.move, 10))) commitChange();
+    // Move within the order shown on screen (the actual call order)
+    const shown = callOrder().order.map(p => p.id);
+    if (Session.moveWaiting(state, id, parseInt(btn.dataset.move, 10), shown)) commitChange();
   }
 
   // ---------- modal ----------
@@ -787,7 +809,7 @@ const App = (() => {
   // ---------- player management ----------
 
   function playerStatus(p) {
-    if (!Queue.isActive(p)) return { key: 'removed', label: 'Removed' };
+    if (!Queue.isActive(p)) return { key: 'removed', label: p.leftAt ? `Left · ${p.leftAt}` : 'Removed' };
     const loc = renderCache ? renderCache.loc.get(p.id) : Session.locate(state, p.id);
     if (loc) return { key: 'playing', label: `Playing · Court ${loc.courtId}` };
     const pos = renderCache
@@ -825,8 +847,8 @@ const App = (() => {
     const removeBlock = loc
       ? `<button type="button" class="btn btn-danger-ghost" disabled>Remove from session</button>
          <p class="hint">${escapeHtml(p.name)} is playing on Court ${loc.courtId}. Swap them out or complete the match before removing them.</p>`
-      : `<button type="button" class="btn btn-danger-ghost" data-modal-action="remove">Remove from session</button>
-         <p class="hint">Their stats and match history are kept.</p>`;
+      : `<button type="button" class="btn btn-danger-ghost" data-modal-action="remove">${Icons.svg('trash')}Remove from session</button>
+         <p class="hint">They stay on the session record (marked as left, with the time), keeping their stats and match history. You can restore them later.</p>`;
 
     openModal({
       title: `Manage ${p.name}`,
@@ -850,13 +872,75 @@ const App = (() => {
       },
       onAction: action => {
         if (action !== 'remove') return;
-        if (!confirm(`Remove ${p.name} from the session?\n\nThey leave the waiting list${p.fixedPartnerId != null ? ' and their fixed partnership ends' : ''}. Their stats and match history are kept.`)) return;
+        const partnerNote = p.fixedPartnerId != null ? ' and their fixed partnership ends' : '';
+        const question = `Remove ${p.name} from the session?\n\nThey leave the waiting list${partnerNote}. They stay on the session record with their stats and match history, and you can restore them later.`;
+        if (!confirm(question)) return;
         const result = Session.removePlayer(state, p.id);
         if (!result.ok) return showModalError(result.error);
         closeModal();
         commitChange();
+        showToast(`${p.name} was removed. Use Restore to bring them back.`);
       },
     });
+  }
+
+  // ---------- add / restore players mid-session ----------
+
+  function openAddPlayersModal() {
+    if (state.phase !== 'session') return;
+    const doubles = state.config.matchType === 'doubles';
+    openModal({
+      title: 'Add Players',
+      saveLabel: 'Add Players',
+      body: `
+        <div class="modal-stack">
+          <label class="field">
+            <span class="field-label">Names <span class="field-label-note">(one per line)</span></span>
+            <textarea id="m-new-names" rows="4" autocomplete="off" placeholder="e.g. Kiara&#10;Simba"></textarea>
+          </label>
+          <div class="preview-box" id="m-add-preview" aria-live="polite"></div>
+          <p class="hint">New players join the rotation level with whoever has played least, behind the people already waiting, so they don’t jump the queue. Their stats start at 0.${doubles ? ' You can set a fixed partner from their ⋮ menu afterwards.' : ''} Typing the name of a removed player restores them with their stats.</p>
+        </div>`,
+      onChange: () => {
+        hideModalError();
+        const lines = q('#m-new-names').value.split(/\r?\n|,/).map(Scheduler.normalizeName).filter(Boolean);
+        const preview = q('#m-add-preview');
+        if (!lines.length) {
+          preview.innerHTML = '<div class="preview-note">Type one or more names.</div>';
+          return;
+        }
+        const removedByKey = new Map(state.players.filter(p => !Queue.isActive(p))
+          .map(p => [Scheduler.normalizeName(p.name).toLowerCase(), p]));
+        preview.innerHTML = `<div class="preview-title">Will add ${lines.length} player${lines.length === 1 ? '' : 's'}</div>`
+          + lines.map(n => {
+            const back = removedByKey.get(n.toLowerCase());
+            return `<div class="preview-line">${escapeHtml(n)}${back ? ' <span class="preview-note">(restored, keeps their stats)</span>' : ''}</div>`;
+          }).join('');
+      },
+      onSave: () => {
+        const names = q('#m-new-names').value.split(/\r?\n|,/);
+        const result = Session.addPlayers(state, names);
+        if (!result.ok) return result.errors;
+        commitChange();
+        const parts = [];
+        if (result.added.length) parts.push(`Added ${result.added.join(', ')}`);
+        if (result.restored.length) parts.push(`Restored ${result.restored.join(', ')}`);
+        showToast(`${parts.join('. ')}.`);
+        return null;
+      },
+    });
+  }
+
+  function onRestorePlayer(id) {
+    const p = Session.playerById(state, id);
+    if (!p) return;
+    const result = Session.restorePlayer(state, id);
+    if (!result.ok) {
+      showToast(result.error);
+      return;
+    }
+    commitChange();
+    showToast(`${p.name} is back in the rotation.`);
   }
 
   // ---------- manual swap ----------
@@ -1090,20 +1174,20 @@ const App = (() => {
     state.waitOverride = null;
     draft = { numPlayers: 8, numCourts: 2, matchType: 'doubles', names: [] };
 
-    el.sessionMeta.innerHTML = '';
+    el.sessionMeta.html = '';
     el.printCourts.textContent = '';
     el.printPlayerCount.textContent = '';
-    el.printPlayerNames.textContent = '';
-    el.courtsGrid.innerHTML = '';
-    el.waitingList.innerHTML = '';
+    el.printPlayerNames.html = '';
+    el.courtsGrid.html = '';
+    el.waitingList.html = '';
     el.queueMode.textContent = '';
     el.btnResetOrder.hidden = true;
-    el.statsBody.innerHTML = '';
-    el.statsCards.innerHTML = '';
-    el.pmList.innerHTML = '';
-    document.getElementById('stats-table').querySelector('thead tr').innerHTML =
+    el.statsBody.html = '';
+    el.statsCards.html = '';
+    el.pmList.html = '';
+    el.statsHead.html =
       '<th>Player</th><th>Games</th><th>Wins</th><th>Losses</th><th>Win Rate</th>';
-    el.historyList.innerHTML = '';
+    el.historyList.html = '';
     el.historyPrintBody.innerHTML = '';
     ['stats-card', 'history-card', 'players-card'].forEach(id => {
       const card = document.getElementById(id);
@@ -1212,6 +1296,7 @@ const App = (() => {
   }
 
   function renderSession() {
+    const metaBefore = el.sessionMeta.html;
     renderCache = buildRenderCache();
     try {
       renderMeta();
@@ -1223,7 +1308,8 @@ const App = (() => {
     } finally {
       renderCache = null;
     }
-    syncHeaderSpace(); // the summary chips may have changed the header's height
+    // Re-measure the header only when the summary chips actually changed
+    if (el.sessionMeta.html !== metaBefore) syncHeaderSpace();
   }
 
   function renderMeta() {
@@ -1236,37 +1322,44 @@ const App = (() => {
         <span class="summary-icon">${Icons.svg(iconName)}</span>
         <span class="summary-text"><strong>${value}</strong><span>${label}</span></span>
       </div>`;
-    el.sessionMeta.innerHTML =
+    el.sessionMeta.html =
       chip('users', count, plural(count, 'Player')) +
       chip('court', c.numCourts, plural(c.numCourts, 'Court')) +
       chip('trophy', doubles ? 'Doubles' : 'Singles', 'Match Type') +
       (doubles ? chip('link', pairs, plural(pairs, 'Fixed Pair')) : '');
 
-    // One-line version shown in the phone header when the chips are collapsed
-    document.getElementById('chips-summary-text').textContent = [
-      `${count} ${plural(count, 'player')}`,
-      `${c.numCourts} ${plural(c.numCourts, 'court')}`,
-      doubles ? 'Doubles' : 'Singles',
-      doubles && pairs ? `${pairs} fixed ${plural(pairs, 'pair')}` : '',
-    ].filter(Boolean).join(' · ');
-
-    const active = state.players.filter(Queue.isActive);
+    // Print list: everyone who took part (players who left are marked)
+    const roster = pdfRoster();
+    const leftCount = roster.filter(r => r.left).length;
     el.printCourts.textContent = `${c.numCourts} Court${c.numCourts === 1 ? '' : 's'}`;
-    el.printPlayerCount.textContent = active.length;
-    // PDF player list: more players -> more columns, filled top-to-bottom
-    const n = active.length;
-    const cols = n <= 6 ? 2 : n <= 18 ? 3 : n <= 36 ? 4 : n <= 60 ? 5 : 6;
+    el.printPlayerCount.textContent = leftCount ? `${roster.length} · ${leftCount} left` : roster.length;
+    // more players -> more columns, filled top-to-bottom
+    const n = roster.length;
+    const cols = PdfExport.playerColumns(n);
     el.printPlayerNames.style.setProperty('--cols', cols);
-    el.printPlayerNames.innerHTML = active
-      .map((p, i) => `<li><span class="pp-num">${i + 1}</span><span class="pp-name">${escapeHtml(p.name)}</span></li>`)
+    el.printPlayerNames.style.setProperty('--rows', Math.max(1, Math.ceil(n / cols)));
+    el.printPlayerNames.html = roster
+      .map((r, i) => `<li class="${r.left ? 'is-left' : ''}"><span class="pp-num">${i + 1}</span><span class="pp-name">${escapeHtml(r.name)}${r.note ? ` <span class="pp-note">${escapeHtml(r.note)}</span>` : ''}</span></li>`)
       .join('');
+  }
+
+  /** Session roster for print/PDF: join order, with joined/left notes. */
+  function pdfRoster() {
+    return state.players.slice().sort((a, b) => a.id - b.id).map(p => {
+      const left = !Queue.isActive(p);
+      let note = '';
+      if (left) note = p.leftAt ? `left ${p.leftAt}` : 'left';
+      else if (p.rejoinedAt) note = `rejoined ${p.rejoinedAt}`;
+      else if (p.joinedAt) note = `joined ${p.joinedAt}`;
+      return { name: p.name, note, left };
+    });
   }
 
   // ---- courts ----
 
   function renderCourts() {
     el.courtsGrid.dataset.count = String(state.courts.length);
-    el.courtsGrid.innerHTML = state.courts.map(renderCourtCard).join('');
+    el.courtsGrid.html = state.courts.map(renderCourtCard).join('');
   }
 
   function renderTeam(ids, team, m, isDoubles) {
@@ -1373,20 +1466,59 @@ const App = (() => {
 
   // ---- waiting queue ----
 
+  /**
+   * "Next to play" forecast. The next pick happens right after a match ends,
+   * so simulate exactly that: the match that started
+   * earliest finishes (the result doesn't matter to matchmaking), its players
+   * rejoin with updated games/history, and the same pick is run with the same
+   * seed the real one will use.
+   */
+  function forecastNextUp(busyIds) {
+    const live = state.courts.filter(c => c.activeMatch);
+    const { matchType } = state.config;
+    // Empty courts are refilled the moment that becomes possible, so any court
+    // still empty now can't be filled yet: the next pick always follows a match
+    // ending. Only with no match in progress at all is there nothing to simulate.
+    if (!live.length) {
+      return Queue.nextUpIds(state.players, busyIds, matchType, state.matchSeq, state.waitOverride, state.nextMatchId);
+    }
+    const finishing = live.reduce((a, b) => (b.activeMatch.matchId < a.activeMatch.matchId ? b : a)).activeMatch;
+    const players = JSON.parse(JSON.stringify(state.players));
+    const seq = state.matchSeq + 1;
+    Queue.commitMatch(players, { courtId: 0, team1: finishing.team1, team2: finishing.team2, winner: 'team1', team1Score: null, team2Score: null }, seq);
+    const stillBusy = new Set([...busyIds].filter(id => !finishing.team1.includes(id) && !finishing.team2.includes(id)));
+    const ids = Queue.nextUpIds(players, stillBusy, matchType, seq, state.waitOverride, state.nextMatchId);
+    // Only highlight people who are actually waiting right now
+    return new Set([...ids].filter(id => !busyIds.has(id)));
+  }
+
+  /**
+   * The waiting list in the order people will actually be called: the
+   * forecast "Next to play" group first, then everyone else in rotation order.
+   * Numbers and the ↑ ↓ arrows both use this order, so what you see is what
+   * happens.
+   */
+  function callOrder(busyIds = getBusyPlayerIds()) {
+    const waiting = Session.waitingOrder(state);
+    const nextUp = forecastNextUp(busyIds);
+    const next = waiting.filter(p => nextUp.has(p.id));
+    const rest = waiting.filter(p => !nextUp.has(p.id));
+    return { order: next.concat(rest), nextCount: next.length };
+  }
+
   function renderQueue() {
     const busyIds = getBusyPlayerIds();
-    const waiting = Session.waitingOrder(state);
-    const nextUp = Queue.nextUpIds(state.players, busyIds, state.config.matchType, state.matchSeq, state.waitOverride);
+    const { order: waiting, nextCount } = callOrder(busyIds);
     const manual = new Set(state.waitOverride || []);
 
     el.btnResetOrder.hidden = !state.waitOverride;
     el.queueMode.className = `queue-mode${state.waitOverride ? ' is-manual' : ''}`;
-    el.queueMode.innerHTML = state.waitOverride
+    el.queueMode.html = state.waitOverride
       ? `${Icons.svg('hand')}<span><strong>Manual order (temporary).</strong> Players tagged “Manual” go first, in this order, until they are called to a court. Anyone finishing a match rejoins after them in automatic order. Fixed pairs are still called together.</span>`
       : `${Icons.svg('clock')}<span>Automatic order: fewest games first, then longest wait. Use the arrows to override temporarily.</span>`;
 
     if (!waiting.length) {
-      el.waitingList.innerHTML = '<p class="empty-note">Everyone is currently playing.</p>';
+      el.waitingList.html = '<p class="empty-note">Everyone is currently playing.</p>';
       return;
     }
 
@@ -1407,10 +1539,10 @@ const App = (() => {
       </li>`;
 
     const indexed = waiting.map((p, i) => [p, i]);
-    const next = indexed.filter(([p]) => nextUp.has(p.id));
-    const rest = indexed.filter(([p]) => !nextUp.has(p.id));
+    const next = indexed.slice(0, nextCount);
+    const rest = indexed.slice(nextCount);
 
-    el.waitingList.innerHTML = `
+    el.waitingList.html = `
       ${next.length ? `
         <div class="queue-next">
           <div class="queue-next-title">${Icons.svg('star')}Next to play</div>
@@ -1426,11 +1558,11 @@ const App = (() => {
     const count = activeCount();
     el.pmCount.textContent = `${count} ${plural(count, 'Player')}`;
     el.pmHint.textContent = doubles
-      ? 'Use the ⋮ menu to rename, set a fixed partner, or remove a player.'
-      : 'Use the ⋮ menu to rename or remove a player.';
+      ? 'Add latecomers anytime. Use a player’s ⋮ menu to rename, set a fixed partner, or remove them.'
+      : 'Add latecomers anytime. Use a player’s ⋮ menu to rename or remove them.';
 
     const statusBadge = { playing: 'badge-success', waiting: 'badge-lavender', removed: 'badge-neutral' };
-    el.pmList.innerHTML = state.players
+    el.pmList.html = state.players
       .slice()
       .sort((a, b) => (Queue.isActive(b) - Queue.isActive(a)) || a.id - b.id)
       .map(p => {
@@ -1441,7 +1573,7 @@ const App = (() => {
           : '<div class="pm-partner">No fixed partner</div>';
         const action = Queue.isActive(p)
           ? `<button type="button" class="icon-btn pm-more" data-action="manage-player" data-player-id="${p.id}" aria-label="Manage ${escapeHtml(p.name)}" title="Rename, partner, remove">${Icons.svg('more')}</button>`
-          : '';
+          : `<button type="button" class="btn btn-secondary btn-sm pm-restore" data-action="restore-player" data-player-id="${p.id}" aria-label="Restore ${escapeHtml(p.name)}">${Icons.svg('reset')}Restore</button>`;
         return `
           <li class="pm-card is-${status.key}">
             <div class="pm-top">
@@ -1451,6 +1583,8 @@ const App = (() => {
             <div class="pm-meta">
               <span class="badge ${statusBadge[status.key]}">${status.label}</span>
               <span class="pm-games">${p.gamesPlayed} ${plural(p.gamesPlayed, 'game')}</span>
+              ${p.rejoinedAt && Queue.isActive(p) ? `<span class="pm-games">· Rejoined ${escapeHtml(p.rejoinedAt)}</span>`
+                : p.joinedAt ? `<span class="pm-games">· Joined ${escapeHtml(p.joinedAt)}</span>` : ''}
             </div>
             ${partnerLine}
           </li>`;
@@ -1469,14 +1603,13 @@ const App = (() => {
   function renderStats() {
     const anyScores = state.players.some(p => p.scoredGames > 0);
     const players = state.players
-      .filter(p => Queue.isActive(p) || p.gamesPlayed > 0)
-      .slice()
+      .slice() // everyone who took part, including players who left
       .sort((a, b) => b.gamesPlayed - a.gamesPlayed || a.name.localeCompare(b.name));
-    const removedTag = p => (Queue.isActive(p) ? '' : ' <span class="muted-tag">removed</span>');
+    const removedTag = p => (Queue.isActive(p) ? '' : ` <span class="muted-tag">left${p.leftAt ? ` ${escapeHtml(p.leftAt)}` : ''}</span>`);
     const pts = (p, key) => (p.scoredGames > 0 ? p[key] : '—');
 
     // Desktop / tablet table
-    el.statsBody.innerHTML = players.map(p => `
+    el.statsBody.html = players.map(p => `
       <tr>
         <td class="player-name-cell">${escapeHtml(p.name)}${removedTag(p)}</td>
         <td class="num">${p.gamesPlayed}</td>
@@ -1486,11 +1619,11 @@ const App = (() => {
         ${anyScores ? `<td class="num">${pts(p, 'pointsScored')}</td><td class="num">${pts(p, 'pointsAgainst')}</td>` : ''}
       </tr>`).join('');
     const extraHeaders = anyScores ? '<th class="num">Pts For</th><th class="num">Pts Against</th>' : '';
-    document.getElementById('stats-table').querySelector('thead tr').innerHTML =
+    el.statsHead.html =
       `<th>Player</th><th class="num">Games</th><th class="num">Wins</th><th class="num">Losses</th><th class="num">Win Rate</th>${extraHeaders}`;
 
     // Mobile cards: key numbers first, points tucked into an expandable row
-    el.statsCards.innerHTML = players.map(p => `
+    el.statsCards.html = players.map(p => `
       <article class="stat-card">
         <div class="stat-card-name">${escapeHtml(p.name)}${removedTag(p)}</div>
         <dl class="stat-grid">
@@ -1543,12 +1676,12 @@ const App = (() => {
   }
 
   function renderHistory() {
-    renderHistoryPrint();
+    // The print-only list is built just before printing (preparePrint), not on every change
     if (!state.history.length) {
-      el.historyList.innerHTML = '<p class="empty-note">No matches completed yet.</p>';
+      el.historyList.html = '<p class="empty-note">No matches completed yet.</p>';
       return;
     }
-    el.historyList.innerHTML = state.history
+    el.historyList.html = state.history
       .slice()
       .reverse()
       .map((h, idx) => {
@@ -1586,8 +1719,55 @@ const App = (() => {
    * (player stats + match history only) via the browser's native
    * "Save as PDF" print destination — no PDF library required.
    */
-  function exportPdf() {
-    window.print(); // preparation happens in beforeprint, so Ctrl+P / the browser menu behave the same
+  /**
+   * Export PDF builds the file directly (js/pdf.js), so it looks the same on
+   * phones and computers and has no browser header/footer (page address/date).
+   * If the PDF tool can't load (e.g. offline), fall back to the print dialog;
+   * Ctrl+P / the browser menu still use the print stylesheet.
+   */
+  let exporting = false;
+  async function exportPdf() {
+    if (exporting || state.phase !== 'session') return;
+    exporting = true;
+    const btn = el.btnExportPdf;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `${Icons.svg('printer')}Preparing…`;
+    try {
+      await PdfExport.generate(buildPdfData());
+    } catch (err) {
+      console.warn('PDF export failed, using the print dialog instead.', err);
+      showToast('Couldn’t create the PDF here, opening the print dialog instead.');
+      window.print();
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = original;
+      exporting = false;
+    }
+  }
+
+  /** Everything the PDF needs, in display order (history newest first, as on screen). */
+  function buildPdfData() {
+    const c = state.config;
+    return {
+      dateLabel: localDateISO(new Date()),
+      courts: c.numCourts,
+      matchType: c.matchType === 'doubles' ? 'Doubles' : 'Singles',
+      players: pdfRoster(),
+      history: state.history.slice().reverse().map(h => ({
+        number: h.number,
+        time: h.timeLabel || '',
+        court: h.courtId,
+        team1: historyNames(h.team1, h.team1Names),
+        team2: historyNames(h.team2, h.team2Names),
+        winner: h.winner,
+        score: h.team1Score == null ? null : `${h.team1Score}–${h.team2Score}`,
+        manual: !!h.manual,
+      })),
+      sponsorUrl: document.querySelector('a.sponsor').href,
+      logoUrl: 'img/pickle-sa-balay.webp',
+      watermarkUrl: 'img/pickle-sa-balay-badge.webp',
+    };
   }
 
   /**
@@ -1598,6 +1778,7 @@ const App = (() => {
   let printRestore = null;
   function preparePrint() {
     if (printRestore || state.phase !== 'session') return;
+    renderHistoryPrint(); // build the print-only list now
     const historyDetails = document.getElementById('history-card');
     const originalTitle = document.title;
     const wasOpen = historyDetails.open;

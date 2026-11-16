@@ -71,8 +71,9 @@ const Session = (() => {
     state.waitOverride = kept.length ? kept : null;
   }
 
-  function moveWaiting(state, id, delta) {
-    const order = waitingOrder(state).map(p => p.id);
+  /** `baseOrder` (optional): the order the organizer sees, which the move applies to. */
+  function moveWaiting(state, id, delta, baseOrder) {
+    const order = Array.isArray(baseOrder) && baseOrder.length ? baseOrder.slice() : waitingOrder(state).map(p => p.id);
     const i = order.indexOf(id);
     const j = i + delta;
     if (i === -1 || j < 0 || j >= order.length) return false;
@@ -151,7 +152,11 @@ const Session = (() => {
     return { ok: true };
   }
 
-  /** Soft-remove: keeps the player record so history and stats stay intact. */
+  /**
+   * Remove a player from the session. They stay on record (marked as left,
+   * with the time), keeping their stats and match history, and can be
+   * restored later. Returns { ok } or { ok: false, error }.
+   */
   function removePlayer(state, id) {
     const p = playerById(state, id);
     if (!p || !Queue.isActive(p)) return { ok: false, error: 'Player not found in this session.' };
@@ -163,9 +168,107 @@ const Session = (() => {
       };
     }
     clearPartner(state, p);
+    // Always kept on record (marked as left), so the session shows everyone
+    // who took part. Restore brings them back with their stats.
     p.active = false;
+    p.leftAt = timeLabelNow();
     pruneOverride(state);
     return { ok: true };
+  }
+
+  function timeLabelNow() {
+    return new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  // ---------- adding / restoring players mid-session ----------
+
+  /**
+   * Where a newcomer (or returning player) joins the rotation: their HIDDEN
+   * rotation count is set level with the active player who has played least
+   * (e.g. everyone has 1 game -> they count as 1), and they queue behind
+   * everyone already waiting at that level. The visible stats are untouched,
+   * so a new player still shows their real 0 games.
+   */
+  function joinRotation(state, p) {
+    const others = state.players.filter(o => Queue.isActive(o) && o.id !== p.id);
+    const baseline = others.length ? Math.min(...others.map(Queue.rotationGames)) : 0;
+    p.queueGames = Math.max(Queue.rotationGames(p), baseline);
+    p.lastActiveSeq = state.matchSeq;
+  }
+
+  function restorePlayer(state, id) {
+    const p = playerById(state, id);
+    if (!p || Queue.isActive(p)) return { ok: false, error: 'That player is already in the session.' };
+    if (activeCount(state) >= Scheduler.MAX_PLAYERS) {
+      return { ok: false, error: `A session can have at most ${Scheduler.MAX_PLAYERS} players.` };
+    }
+    const clash = state.players.find(o => o.id !== id && Queue.isActive(o)
+      && Scheduler.normalizeName(o.name).toLowerCase() === Scheduler.normalizeName(p.name).toLowerCase());
+    if (clash) return { ok: false, error: `Another active player is already named "${clash.name}". Rename them first.` };
+    p.active = true;
+    p.rejoinedAt = timeLabelNow();
+    joinRotation(state, p);
+    return { ok: true };
+  }
+
+  function activeCount(state) {
+    return state.players.filter(Queue.isActive).length;
+  }
+
+  /**
+   * Add one or more players by name (validated as a batch before anything
+   * changes). A name matching a removed player restores that player, keeping
+   * their stats and history. Returns { ok, added: [names], restored: [names] }
+   * or { ok: false, errors }.
+   */
+  function addPlayers(state, rawNames) {
+    const names = rawNames.map(Scheduler.normalizeName).filter(Boolean);
+    const errors = [];
+    if (!names.length) return { ok: false, errors: ['Enter at least one name.'] };
+
+    const seen = new Set();
+    const plan = []; // { name, restore: player|null }
+    names.forEach(name => {
+      const key = name.toLowerCase();
+      if (name.length > Scheduler.MAX_NAME_LENGTH) {
+        errors.push(`"${name}" is longer than ${Scheduler.MAX_NAME_LENGTH} characters.`);
+        return;
+      }
+      if (seen.has(key)) {
+        errors.push(`"${name}" is listed more than once.`);
+        return;
+      }
+      seen.add(key);
+      const match = state.players.find(p => Scheduler.normalizeName(p.name).toLowerCase() === key);
+      if (match && Queue.isActive(match)) {
+        errors.push(`"${match.name}" is already in this session.`);
+        return;
+      }
+      plan.push({ name, restore: match || null });
+    });
+    if (activeCount(state) + plan.length > Scheduler.MAX_PLAYERS) {
+      errors.push(`A session can have at most ${Scheduler.MAX_PLAYERS} players.`);
+    }
+    if (errors.length) return { ok: false, errors };
+
+    const added = [];
+    const restored = [];
+    let nextId = state.players.reduce((max, p) => Math.max(max, p.id), 0) + 1;
+    plan.forEach(({ name, restore }) => {
+      if (restore) {
+        restore.active = true;
+        restore.rejoinedAt = timeLabelNow();
+        joinRotation(state, restore);
+        restored.push(restore.name);
+      } else {
+        const p = Queue.createPlayer(nextId++, name);
+        p.joinedAt = timeLabelNow(); // joined after the session started
+        state.players.push(p);
+        joinRotation(state, p);
+        added.push(name);
+      }
+    });
+    return { ok: true, added, restored };
   }
 
   // ---------- manual court changes ----------
@@ -326,6 +429,8 @@ const Session = (() => {
     resetWaitingOrder,
     updatePlayer,
     removePlayer,
+    addPlayers,
+    restorePlayer,
     fixedPairsSplitBy,
     planSwap,
     planPairing,

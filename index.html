@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
-<link rel="stylesheet" href="css/style.css?v=43" />
+<link rel="stylesheet" href="css/style.css?v=56" />
 </head>
 <body>
 <header class="app-header no-print">
@@ -35,13 +35,9 @@
       </div>
     </div>
 
-    <!-- Session summary card + its collapse toggle (toggle shown on phones only) -->
+    <!-- Session summary card (compacts automatically when the header shrinks on scroll) -->
     <div class="summary-bar">
       <div class="summary-chips" id="session-meta" aria-label="Session summary" hidden></div>
-      <button type="button" class="chips-toggle" id="btn-chips-toggle" aria-controls="session-meta" aria-expanded="true" aria-label="Hide session summary" title="Hide session summary">
-        <span class="chips-toggle-text" id="chips-summary-text"></span>
-        <span class="chips-toggle-icon" data-icon="chevronDown"></span>
-      </button>
     </div>
 
     <a class="sponsor" href="https://www.facebook.com/share/19PkqEfUcM/?mibextid=wwXIfr" target="_blank" rel="noopener noreferrer" title="Visit Pickle sa Balay on Facebook" aria-label="Sponsored by Pickle sa Balay. Opens their Facebook page in a new tab">
@@ -201,7 +197,10 @@
             <span class="details-toggle"><span class="badge badge-neutral" id="pm-count"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
           </summary>
           <div class="details-body">
-            <p class="hint pm-hint" id="pm-hint"></p>
+            <div class="pm-toolbar">
+              <p class="hint pm-hint" id="pm-hint"></p>
+              <button type="button" class="btn btn-primary btn-sm" id="btn-add-players"><span data-icon="plus"></span>Add Players</button>
+            </div>
             <ul class="pm-list" id="pm-list"></ul>
           </div>
         </details>
@@ -273,11 +272,12 @@
 <!-- Short notices (e.g. "Updated with changes made in another tab") -->
 <div class="toast no-print" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/icons.js?v=43"></script>
-<script src="js/scheduler.js?v=43"></script>
-<script src="js/queue.js?v=43"></script>
-<script src="js/storage.js?v=43"></script>
-<script src="js/session.js?v=43"></script>
-<script src="js/app.js?v=43"></script>
+<script src="js/icons.js?v=56"></script>
+<script src="js/scheduler.js?v=56"></script>
+<script src="js/queue.js?v=56"></script>
+<script src="js/storage.js?v=56"></script>
+<script src="js/session.js?v=56"></script>
+<script src="js/pdf.js?v=56"></script>
+<script src="js/app.js?v=56"></script>
 </body>
 </html>

@@ -12,9 +12,28 @@ const Scheduler = (() => {
     return PLAYERS_PER_MATCH[matchType] || 4;
   }
 
-  /** One rule for names everywhere: trim and collapse inner whitespace. */
+  /**
+   * Capitalize every word: "maria christine" / "MARIA CHRISTINE" -> "Maria Christine".
+   * Parts split by hyphens/apostrophes are capitalized too ("anne-marie" ->
+   * "Anne-Marie", "o'neil" -> "O'Neil"). A word typed in deliberate mixed case
+   * keeps its inner capitals ("McDonald" stays "McDonald").
+   */
+  function capitalizeName(name) {
+    return name.split(' ').map(word => word.split(/([-'’])/).map(part => {
+      if (!part || /^[-'’]$/.test(part)) return part;
+      const lower = part.toLocaleLowerCase();
+      const upper = part.toLocaleUpperCase();
+      // Keep inner capitals only when the word already starts with one
+      // ("McDonald", "DeShawn"); "jAY" or "JAY" are tidied to "Jay".
+      const startsUpper = part.charAt(0) !== part.charAt(0).toLocaleLowerCase();
+      const base = part === upper || !startsUpper ? lower : part;
+      return base.charAt(0).toLocaleUpperCase() + base.slice(1);
+    }).join('')).join(' ');
+  }
+
+  /** One rule for names everywhere: trim, collapse inner whitespace, capitalize. */
   function normalizeName(name) {
-    return String(name == null ? '' : name).trim().replace(/\s+/g, ' ');
+    return capitalizeName(String(name == null ? '' : name).trim().replace(/\s+/g, ' '));
   }
 
   /**
@@ -75,5 +94,5 @@ const Scheduler = (() => {
     return { perMatch, activeCourts, idleCourts, playingAtStart, waitingAtStart };
   }
 
-  return { MAX_PLAYERS, MAX_COURTS, MAX_NAME_LENGTH, playersPerMatch, normalizeName, validateSetup, computeCourtSetup };
+  return { MAX_PLAYERS, MAX_COURTS, MAX_NAME_LENGTH, playersPerMatch, normalizeName, capitalizeName, validateSetup, computeCourtSetup };
 })();
