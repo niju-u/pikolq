@@ -1,31 +1,47 @@
-/**
- * app.js
- */
+// app.js: main app. Runs the setup and session screens, saves, and draws the page.
 
 const App = (() => {
   const el = {};
   const SESSION_VERSION = 2;
 
-  const state = {
-    version: SESSION_VERSION,
-    phase: 'setup', // 'setup' | 'session'
-    config: null, // { numPlayers, numCourts, matchType, perMatch, activeCourts, idleCourts }
-    players: [],
-    courts: [],
-    history: [],
-    matchSeq: 0,
-    nextMatchId: 1,
-    waitOverride: null, // temporary manual waiting order (player ids) or null
-  };
+  function blankState() {
+    return {
+      version: SESSION_VERSION,
+      phase: 'session',
+      name: '', // shown in the session header and PDF
+      config: null, // { numPlayers, numCourts, matchType, perMatch, activeCourts, idleCourts }
+      players: [],
+      courts: [],
+      history: [],
+      matchSeq: 0,
+      nextMatchId: 1,
+      waitOverride: null, // manual waiting order (player ids), or null
+    };
+  }
+
+  // Every session on the page has a context: { id, state, el, root }.
+  // The session code below works on `state` and `el`; activate(ctx) points them at one session.
+  const contexts = new Map();
+  let active = null;
+  let state = blankState();
+
+  function activate(ctx) {
+    if (!ctx || active === ctx) return;
+    active = ctx;
+    state = ctx.state;
+    Object.assign(el, ctx.el);
+  }
 
   let draft = {
     numPlayers: 8,
     numCourts: 2,
     matchType: 'doubles',
     names: [],
+    sessionName: '',
   };
 
-  let modal = null; // { onChange, onSave, onAction } while the dialog is open
+  let modal = null; // set while the pop-up is open
+  const MAX_SESSION_NAME = 40;
 
   // ---------- init ----------
 
@@ -34,48 +50,175 @@ const App = (() => {
     cacheEls();
     bindEvents();
 
-    const saved = Storage.loadSession();
-    if (saved && !isValidSession(saved)) {
-      console.warn('Discarding saved session: unrecognised or corrupted data.');
-      Storage.clearSession();
+    Storage.migrateLegacy();
+    Storage.listSessions().forEach(entry => openSavedSession(entry.id));
+
+    const savedDraft = Storage.loadDraft();
+    if (savedDraft) draft = Object.assign(draft, savedDraft);
+    renderSetup();
+    showView(contexts.size ? 'sessions' : 'setup');
+
+    // If another tab changes saved data, use its version instead of overwriting it.
+    Storage.onChangedElsewhere(onChangedElsewhere);
+  }
+
+  /** Load a saved session and add it to the page. Returns its context, or null if it's broken. */
+  function openSavedSession(id) {
+    const saved = Storage.loadSession(id);
+    if (!saved || !isValidSession(saved)) {
+      if (saved) console.warn('Discarding saved session: unrecognised or corrupted data.');
+      Storage.deleteSession(id);
+      return null;
     }
-    if (saved && isValidSession(saved)) {
-      applySavedSession(saved);
-      // A court whose damaged line-up was cleared during repair gets refilled,
-      // and the repaired session is saved so the damage doesn't come back.
-      fillIdleCourts();
-      persist();
-      showView('session');
+    const ctx = addSessionToPage(id, migrateSession(saved));
+    // Refill courts cleared during repair, then save the fixed session.
+    fillIdleCourts();
+    persist();
+    renderSession();
+    return ctx;
+  }
+
+  function onChangedElsewhere(change) {
+    if (change.type === 'cleared') {
+      [...contexts.values()].forEach(ctx => removeSessionFromPage(ctx));
+      showToast('All sessions were deleted in another tab.');
+      return;
+    }
+    if (change.type === 'list') {
+      // Pick up sessions added or deleted in another tab
+      const ids = new Set(Storage.listSessions().map(s => s.id));
+      [...contexts.values()].filter(ctx => !ids.has(ctx.id)).forEach(ctx => removeSessionFromPage(ctx));
+      ids.forEach(id => { if (!contexts.has(id)) openSavedSession(id); });
+      return;
+    }
+
+    const ctx = contexts.get(change.id);
+    if (!ctx) return; // a new session; the list change adds it
+    if (modal && modal.ctx === ctx) closeModal(); // that pop-up used old data
+    if (change.session && isValidSession(change.session)) {
+      ctx.state = migrateSession(change.session);
+      ctx.state.phase = 'session';
+      if (active === ctx) state = ctx.state;
+      activate(ctx);
       renderSession();
     } else {
-      const savedDraft = Storage.loadDraft();
-      if (savedDraft) draft = Object.assign(draft, savedDraft);
+      removeSessionFromPage(ctx);
+      showToast('A session was deleted in another tab.');
+    }
+  }
+
+  // ---------- sessions on the page ----------
+
+  /** Copy the session template, wire up its buttons, and make it the active session. */
+  function addSessionToPage(id, sessionState) {
+    const root = el.sessionTemplate.content.firstElementChild.cloneNode(true);
+    Icons.hydrate(root);
+    const ctx = { id, state: sessionState, root, el: {} };
+    const get = name => root.querySelector(`[data-el="${name}"]`);
+    Object.assign(ctx.el, {
+      headName: get('head-name'),
+      headStatus: get('head-status'),
+      headPlaying: get('head-playing'),
+      sessionMeta: get('session-meta'),
+      btnRename: get('btn-rename'),
+      printCourts: get('print-courts'),
+      printPlayerCount: get('print-player-count'),
+      printPlayerNames: get('print-player-names'),
+      courtsGrid: get('courts-grid'),
+      waitingList: get('waiting-list'),
+      queueMode: get('queue-mode'),
+      btnResetOrder: get('btn-reset-order'),
+      statsBody: get('stats-body'),
+      statsCards: get('stats-cards'),
+      statsHead: get('stats-table').querySelector('thead tr'),
+      historyCard: get('history-card'),
+      historyList: get('history-list'),
+      historyPrintBody: get('history-print-body'),
+      pmCount: get('pm-count'),
+      pmHint: get('pm-hint'),
+      pmList: get('pm-list'),
+      btnAddPlayers: get('btn-add-players'),
+      btnExportPdf: get('btn-export-pdf'),
+      btnClearHistory: get('btn-clear-history'),
+      btnReset: get('btn-reset'),
+    });
+    // These sections only update the page when their HTML actually changes (faster).
+    [ctx.el.sessionMeta, ctx.el.printPlayerNames, ctx.el.courtsGrid, ctx.el.queueMode, ctx.el.waitingList,
+      ctx.el.pmList, ctx.el.statsBody, ctx.el.statsHead, ctx.el.statsCards, ctx.el.historyList,
+      ctx.el.headPlaying].forEach(cacheHtml);
+
+    // Remember whether each session is expanded on this device
+    root.open = Storage.getPref(`open_${id}`, '1') === '1';
+    root.addEventListener('toggle', () => {
+      Storage.setPref(`open_${id}`, root.open ? '1' : '0');
+      renderSessionsToolbar();
+    });
+
+    bindSessionEvents(ctx);
+    contexts.set(id, ctx);
+    el.sessionsList.appendChild(root);
+    activate(ctx);
+    return ctx;
+  }
+
+  function removeSessionFromPage(ctx) {
+    if (modal && modal.ctx === ctx) closeModal();
+    ctx.root.remove();
+    contexts.delete(ctx.id);
+    if (active === ctx) {
+      active = null;
+      state = blankState();
+    }
+    if (!contexts.size) {
+      // Keep anything already typed into the new-session form
+      if (el.setupView.hidden) resetSetupForm();
       showView('setup');
-      renderSetup();
+    } else {
+      renderSessionsToolbar();
     }
-
-    // Keep tabs in step: if another tab/window changes the session, follow it
-    // instead of later overwriting its changes with this tab's older copy.
-    Storage.onSessionChangedElsewhere(onSessionChangedElsewhere);
   }
 
-  function applySavedSession(saved) {
-    Object.assign(state, migrateSession(saved));
-    state.phase = 'session';
+  /** Run a session's event handler with that session active. */
+  function on(ctx, node, type, handler) {
+    node.addEventListener(type, e => {
+      activate(ctx);
+      handler(e);
+    });
   }
 
-  function onSessionChangedElsewhere(saved) {
-    closeModal(); // any open dialog was based on the old state
-    if (saved && isValidSession(saved)) {
-      applySavedSession(saved);
-      showView('session');
-      renderSession();
-      showToast('Updated with changes made in another tab.');
-    } else if (state.phase === 'session') {
-      // The session was reset in another tab
-      resetToSetup();
-      showToast('The session was reset in another tab.');
-    }
+  function bindSessionEvents(ctx) {
+    const e = ctx.el;
+    on(ctx, e.btnRename, 'click', ev => {
+      ev.preventDefault(); // don't also open/close the session
+      openRenameSessionModal();
+    });
+    on(ctx, e.courtsGrid, 'click', onCourtsGridClick);
+    on(ctx, e.courtsGrid, 'input', onCourtsGridInput);
+    on(ctx, e.waitingList, 'click', onWaitingListClick);
+    on(ctx, e.btnResetOrder, 'click', () => {
+      Session.resetWaitingOrder(state);
+      commitChange();
+    });
+    on(ctx, e.pmList, 'click', ev => {
+      const btn = ev.target.closest('[data-action]');
+      if (!btn) return;
+      const id = parseInt(btn.dataset.playerId, 10);
+      if (btn.dataset.action === 'manage-player') openManagePlayerModal(id);
+      else if (btn.dataset.action === 'restore-player') onRestorePlayer(id);
+    });
+    on(ctx, e.btnAddPlayers, 'click', openAddPlayersModal);
+    on(ctx, e.btnExportPdf, 'click', exportPdf);
+    on(ctx, e.btnClearHistory, 'click', onClearHistory);
+    on(ctx, e.btnReset, 'click', onResetSession);
+  }
+
+  function cacheHtml(node) {
+    let last = null;
+    Object.defineProperty(node, 'html', {
+      configurable: true,
+      get: () => last,
+      set: v => { if (v !== last) { last = v; node.innerHTML = v; } },
+    });
   }
 
   let toastTimer = null;
@@ -107,12 +250,7 @@ const App = (() => {
       && (ct.activeMatch == null || (teamOk(ct.activeMatch.team1) && teamOk(ct.activeMatch.team2))));
   }
 
-  /**
-   * Upgrade older saved sessions (v1 had no removal, partners or manual order)
-   * and repair damaged data so one bad record can never break the app:
-   * bad numbers become 0, unusable history entries are dropped, broken court
-   * line-ups are cleared (the court is refilled automatically).
-   */
+  /** Update old saved sessions and fix broken data so the app doesn't crash. */
   function migrateSession(s) {
     const int = (v, fallback = 0) => (Number.isInteger(v) && v >= 0 ? v : fallback);
     const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
@@ -125,7 +263,7 @@ const App = (() => {
       p.queueGames = int(p.queueGames, p.gamesPlayed);
       if (!Number.isInteger(p.lastCourtId)) p.lastCourtId = null;
       p.teammates = obj(p.teammates);
-      p.name = Scheduler.normalizeName(p.name) || p.name; // capitalize names from older saves
+      p.name = Scheduler.normalizeName(p.name) || p.name; // capitalize names from old saves
       ['joinedAt', 'leftAt', 'rejoinedAt'].forEach(k => { if (typeof p[k] !== 'string') delete p[k]; });
       p.opponents = obj(p.opponents);
     });
@@ -158,8 +296,8 @@ const App = (() => {
       if (!m) return;
       const all = (m.team1 || []).concat(m.team2 || []);
       const ok = m.team1.length === perTeam && m.team2.length === perTeam
-        && new Set(all).size === all.length          // nobody twice on this court
-        && all.every(id => !onCourt.has(id));         // nobody on two courts
+        && new Set(all).size === all.length          // no one twice on this court
+        && all.every(id => !onCourt.has(id));         // no one on two courts
       if (!ok) {
         c.activeMatch = null;
         c.idleReason = 'Waiting for enough players to free up.';
@@ -178,18 +316,26 @@ const App = (() => {
       if (!q || q.id === p.id || q.fixedPartnerId !== p.id || !p.active || !q.active) p.fixedPartnerId = null;
     });
     s.players.forEach(p => {
-      // second pass: drop the other half of any partnership broken above
+      // Also remove the other half of any partnership broken above
       const q = byId.get(p.fixedPartnerId);
       if (p.fixedPartnerId != null && (!q || q.fixedPartnerId !== p.id)) p.fixedPartnerId = null;
     });
     if (!Array.isArray(s.waitOverride) || !s.waitOverride.every(Number.isInteger)) s.waitOverride = null;
+    s.name = typeof s.name === 'string' && s.name.trim() ? s.name.trim().slice(0, MAX_SESSION_NAME) : 'Session';
     s.version = SESSION_VERSION;
     return s;
   }
 
   function cacheEls() {
     el.setupView = document.getElementById('setup-view');
-    el.sessionView = document.getElementById('session-view');
+    el.sessionsList = document.getElementById('sessions-list');
+    el.sessionTemplate = document.getElementById('session-template');
+    el.sessionsToolbar = document.getElementById('sessions-toolbar');
+    el.sessionsCount = document.getElementById('sessions-count');
+    el.btnToggleAll = document.getElementById('btn-toggle-all');
+    el.btnNewSession = document.getElementById('btn-new-session');
+    el.btnCancelSetup = document.getElementById('btn-cancel-setup');
+    el.inputSessionName = document.getElementById('input-session-name');
 
     el.form = document.getElementById('setup-form');
     el.inputPlayers = document.getElementById('input-players');
@@ -202,26 +348,6 @@ const App = (() => {
     el.namesCount = document.getElementById('names-count');
     el.namesProgressBar = document.getElementById('names-progress-bar');
 
-    el.sessionMeta = document.getElementById('session-meta');
-    el.printCourts = document.getElementById('print-courts');
-    el.printPlayerCount = document.getElementById('print-player-count');
-    el.printPlayerNames = document.getElementById('print-player-names');
-    el.courtsGrid = document.getElementById('courts-grid');
-    el.waitingList = document.getElementById('waiting-list');
-    el.queueMode = document.getElementById('queue-mode');
-    el.btnResetOrder = document.getElementById('btn-reset-order');
-    el.statsBody = document.getElementById('stats-body');
-    el.statsCards = document.getElementById('stats-cards');
-    el.historyList = document.getElementById('history-list');
-    el.historyPrintBody = document.getElementById('history-print-body');
-    el.pmCount = document.getElementById('pm-count');
-    el.pmHint = document.getElementById('pm-hint');
-    el.pmList = document.getElementById('pm-list');
-
-    el.btnExportPdf = document.getElementById('btn-export-pdf');
-    el.btnClearHistory = document.getElementById('btn-clear-history');
-    el.btnReset = document.getElementById('btn-reset');
-
     el.modal = document.getElementById('modal');
     el.modalTitle = document.getElementById('modal-title');
     el.modalBody = document.getElementById('modal-body');
@@ -230,23 +356,19 @@ const App = (() => {
     el.modalCancel = document.getElementById('modal-cancel');
     el.modalX = document.getElementById('modal-x');
     el.toast = document.getElementById('toast');
-    el.statsHead = document.getElementById('stats-table').querySelector('thead tr');
 
-    // Sections redrawn on every change get a cached `.html` setter: the DOM is
-    // only touched when the markup actually changed (keeps big sessions fast).
-    [el.sessionMeta, el.printPlayerNames, el.courtsGrid, el.queueMode, el.waitingList,
-      el.pmList, el.statsBody, el.statsHead, el.statsCards, el.historyList].forEach(node => {
-      let last = null;
-      Object.defineProperty(node, 'html', {
-        configurable: true,
-        get: () => last,
-        set: v => { if (v !== last) { last = v; node.innerHTML = v; } },
-      });
-    });
     el.header = document.querySelector('.app-header');
   }
 
   function bindEvents() {
+    el.btnNewSession.addEventListener('click', startNewSession);
+    el.btnCancelSetup.addEventListener('click', () => showView('sessions'));
+    el.btnToggleAll.addEventListener('click', () => {
+      const open = ![...contexts.values()].some(ctx => ctx.root.open);
+      contexts.forEach(ctx => { ctx.root.open = open; });
+    });
+    el.inputSessionName.addEventListener('input', saveDraftFromForm);
+
     el.inputPlayers.addEventListener('input', onPlayerCountChange);
     el.inputCourts.addEventListener('input', () => {
       saveDraftFromForm();
@@ -266,7 +388,7 @@ const App = (() => {
       saveDraftFromForm();
       updateNameStatus();
     });
-    // Capitalize a name once the organizer leaves the field ("maria christine" -> "Maria Christine")
+    // Capitalize names when the field loses focus ("maria christine" -> "Maria Christine")
     el.playerNameGrid.addEventListener('focusout', e => {
       const input = e.target.closest('.player-name-input');
       if (!input) return;
@@ -287,14 +409,11 @@ const App = (() => {
     el.form.addEventListener('click', onStepperClick);
     el.form.addEventListener('submit', onGenerateQueue);
 
-    // Fixed header (CSS) condenses once the page is scrolled. The page keeps a
-    // spacer of the header's full height, so condensing never moves content.
-    // The back-to-top button appears once the page is scrolled well down.
+    // Shrink the header after scrolling. Show the back-to-top button further down.
     const header = el.header;
     const toTop = document.getElementById('btn-to-top');
 
-    // While expanded, track the header's height continuously (content changes,
-    // expand animation). While condensed, leave the spacer alone.
+    // Keep the spacer matched to the header height while it's expanded.
     if ('ResizeObserver' in window) {
       new ResizeObserver(() => {
         if (!header.classList.contains('is-condensed')) setHeaderSpace(header.offsetHeight);
@@ -302,7 +421,7 @@ const App = (() => {
     }
     window.addEventListener('resize', syncHeaderSpace, { passive: true });
 
-    // Only touch the DOM when the state actually changes.
+    // Only update the page when something changed.
     const syncScroll = () => {
       const y = window.scrollY;
       const condensed = header.classList.contains('is-condensed');
@@ -314,7 +433,7 @@ const App = (() => {
         toTop.tabIndex = showTop ? 0 : -1;
       }
     };
-    // When the expand/condense animation finishes, re-check the spacer.
+    // Re-check the spacer after the header animation ends.
     header.addEventListener('transitionend', e => {
       if (e.target === header || e.target.classList.contains('header-inner')) syncHeaderSpace();
     });
@@ -326,39 +445,19 @@ const App = (() => {
       window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
     });
 
-    el.courtsGrid.addEventListener('click', onCourtsGridClick);
-    el.courtsGrid.addEventListener('input', onCourtsGridInput);
-
-    el.waitingList.addEventListener('click', onWaitingListClick);
-    el.btnResetOrder.addEventListener('click', () => {
-      Session.resetWaitingOrder(state);
-      commitChange();
-    });
-    el.pmList.addEventListener('click', e => {
-      const btn = e.target.closest('[data-action]');
-      if (!btn) return;
-      const id = parseInt(btn.dataset.playerId, 10);
-      if (btn.dataset.action === 'manage-player') openManagePlayerModal(id);
-      else if (btn.dataset.action === 'restore-player') onRestorePlayer(id);
-    });
-    document.getElementById('btn-add-players').addEventListener('click', openAddPlayersModal);
-
-    el.btnExportPdf.addEventListener('click', exportPdf);
-    el.btnClearHistory.addEventListener('click', onClearHistory);
-    el.btnReset.addEventListener('click', onResetSession);
-
-    el.modalBody.addEventListener('input', () => modal && modal.onChange && modal.onChange());
-    el.modalBody.addEventListener('change', () => modal && modal.onChange && modal.onChange());
+    // Pop-up handlers run with the pop-up's session active
+    el.modalBody.addEventListener('input', () => { if (modal && modal.onChange) { activate(modal.ctx); modal.onChange(); } });
+    el.modalBody.addEventListener('change', () => { if (modal && modal.onChange) { activate(modal.ctx); modal.onChange(); } });
     el.modalBody.addEventListener('click', e => {
       const btn = e.target.closest('[data-modal-action]');
-      if (btn && modal && modal.onAction) modal.onAction(btn.dataset.modalAction);
+      if (btn && modal && modal.onAction) { activate(modal.ctx); modal.onAction(btn.dataset.modalAction); }
     });
     el.modalSave.addEventListener('click', onModalSave);
     el.modalCancel.addEventListener('click', closeModal);
     el.modalX.addEventListener('click', closeModal);
-    el.modal.addEventListener('close', () => { modal = null; });
-    // Close on a backdrop click only if the press also STARTED on the backdrop;
-    // otherwise selecting text in a field and releasing outside would close it.
+    // The close event arrives late; ignore it if another pop-up has opened since.
+    el.modal.addEventListener('close', () => { if (!el.modal.open) modal = null; });
+    // Only close if the click started and ended on the backdrop (so selecting text doesn't close it).
     let pressStartedOnBackdrop = false;
     el.modal.addEventListener('pointerdown', e => { pressStartedOnBackdrop = e.target === el.modal; });
     el.modal.addEventListener('click', e => {
@@ -370,11 +469,12 @@ const App = (() => {
     window.addEventListener('afterprint', finishPrint);
   }
 
+  /** 'setup' shows the new-session form; 'sessions' shows every session. */
   function showView(view) {
     el.setupView.hidden = view !== 'setup';
-    el.sessionView.hidden = view !== 'session';
-    el.sessionMeta.hidden = view !== 'session';
-    document.body.classList.toggle('is-session', view === 'session');
+    el.sessionsList.hidden = view !== 'sessions';
+    document.body.classList.toggle('is-session', view === 'sessions');
+    renderSessionsToolbar();
     syncHeaderSpace();
   }
 
@@ -384,11 +484,7 @@ const App = (() => {
     document.documentElement.style.setProperty('--header-h', `${Math.ceil(px)}px`);
   }
 
-  /**
-   * Reserve the header's FULL (expanded) height at the top of the page, even
-   * if it is currently condensed: briefly measure it expanded with transitions
-   * off, then restore. Happens within one frame, so nothing visibly changes.
-   */
+  /** Set the page spacer to the header's full height, even when the header is shrunk. */
   function syncHeaderSpace() {
     const header = el.header;
     if (!header) return;
@@ -401,7 +497,7 @@ const App = (() => {
     header.classList.remove('is-condensed');
     const full = header.offsetHeight;
     header.classList.add('is-condensed');
-    void header.offsetHeight; // apply the condensed styles again before re-enabling transitions
+    void header.offsetHeight; // re-apply the shrunk styles before turning animations back on
     header.classList.remove('is-measuring');
     setHeaderSpace(full);
   }
@@ -420,6 +516,7 @@ const App = (() => {
       numCourts: parseInt(el.inputCourts.value, 10),
       matchType: currentMatchType(),
       names,
+      sessionName: el.inputSessionName.value,
     };
   }
 
@@ -458,11 +555,7 @@ const App = (() => {
     updateNameStatus();
   }
 
-  /**
-   * Display-only feedback while typing names: filled/duplicate highlighting,
-   * "x of N named" progress and the ready status by the Generate button.
-   * Validation on submit (Scheduler.validateSetup) is unchanged.
-   */
+  /** Live feedback while typing names (highlights, "x of N named", ready status). Does not validate. */
   function updateNameStatus() {
     const fields = [...el.playerNameGrid.querySelectorAll('.player-name-field')];
     const names = fields.map(f => Scheduler.normalizeName(f.querySelector('.player-name-input').value));
@@ -519,7 +612,7 @@ const App = (() => {
     `;
   }
 
-  /** −/+ buttons beside the number inputs; fire 'input' so the normal handlers run. */
+  /** -/+ buttons next to the number inputs. */
   function onStepperClick(e) {
     const btn = e.target.closest('[data-step]');
     if (!btn) return;
@@ -548,7 +641,10 @@ const App = (() => {
 
     const setup = Scheduler.computeCourtSetup(d);
 
-    state.version = SESSION_VERSION;
+    const fresh = blankState();
+    fresh.name = (d.sessionName || '').trim().slice(0, MAX_SESSION_NAME) || defaultSessionName();
+    const ctx = addSessionToPage(Storage.newId(), fresh);
+    ctx.root.open = true;
     state.config = { numPlayers: d.numPlayers, numCourts: d.numCourts, matchType: d.matchType, ...setup };
     state.players = generatePlayers(d.names.slice(0, d.numPlayers));
     state.courts = generateCourts(d.numCourts);
@@ -559,14 +655,15 @@ const App = (() => {
 
     state.courts.forEach(court => generateMatchForCourt(court));
 
-    state.phase = 'session';
     Storage.clearDraft();
     persist();
-    showView('session');
     renderSession();
+    resetSetupForm();
+    showView('sessions');
+    ctx.root.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  // ---------- core generators (reusable, DOM-free) ----------
+  // ---------- match logic (no page updates) ----------
 
   function generatePlayers(names) {
     return names.map((name, i) => Queue.createPlayer(i + 1, Scheduler.normalizeName(name)));
@@ -598,12 +695,12 @@ const App = (() => {
       team2ScoreInput: '',
       manual: false,
     };
-    // Players who were manually ordered and have now been called leave the override.
+    // Remove players from the manual order once they've been called.
     Session.pruneOverride(state);
     return true;
   }
 
-  /** Start a match on any empty court that can now be filled. Returns filled court ids. */
+  /** Start matches on any empty courts that can be filled. Returns the court ids. */
   function fillIdleCourts() {
     const filled = [];
     state.courts.forEach(court => {
@@ -612,7 +709,7 @@ const App = (() => {
     return filled;
   }
 
-  /** Common tail of every organizer edit: tidy state, fill free courts, save, redraw. */
+  /** After any organizer change: clean up, fill courts, save, redraw. */
   function commitChange(flashCourtIds = []) {
     Session.pruneOverride(state);
     const filled = fillIdleCourts();
@@ -723,7 +820,7 @@ const App = (() => {
       matchType: state.config.matchType,
       team1: m.team1,
       team2: m.team2,
-      // Names as they were when the match was played, so renames never rewrite history.
+      // Save names as they were at match time, so renaming doesn't change history.
       team1Names: m.team1.map(playerName),
       team2Names: m.team2.map(playerName),
       winner: m.winner,
@@ -768,7 +865,7 @@ const App = (() => {
     el.modalSave.hidden = !canSave;
     el.modalCancel.textContent = canSave ? 'Cancel' : 'Close';
     hideModalError();
-    modal = { onChange, onSave, onAction };
+    modal = { ctx: active, onChange, onSave, onAction };
     if (!el.modal.open) el.modal.showModal();
     if (onChange) onChange();
     const first = el.modalBody.querySelector('input:not([type="hidden"]), select');
@@ -793,6 +890,7 @@ const App = (() => {
 
   function onModalSave() {
     if (!modal || !modal.onSave) return closeModal();
+    activate(modal.ctx);
     const error = modal.onSave();
     if (error) showModalError(error);
     else closeModal();
@@ -1139,9 +1237,7 @@ const App = (() => {
   function onClearHistory() {
     if (!confirm('Clear the match history and player stats?\n\nMatches in progress are kept, and the rotation still remembers who has played more, so the queue stays fair. This cannot be undone.')) return;
     state.history = [];
-    // Displayed stats are derived from history, so they are reset with it.
-    // Rotation data is NOT: queueGames, lastActiveSeq, matchSeq and the
-    // partner/opponent memory are kept so fairness continues as before.
+    // Clearing history resets the stats shown, but keeps rotation data so turns stay fair.
     state.players.forEach(p => {
       p.gamesPlayed = 0;
       p.wins = 0;
@@ -1155,61 +1251,79 @@ const App = (() => {
   }
 
   function onResetSession() {
-    if (!confirm('Reset the session? This clears all players, courts, stats, and match history.')) return;
-    Storage.clearSession();
-    Storage.clearDraft();
-    resetToSetup();
+    if (!confirm(`Delete "${state.name}"? This removes its players, courts, stats and match history. Other sessions aren't affected.`)) return;
+    const ctx = active;
+    Storage.deleteSession(ctx.id);
+    removeSessionFromPage(ctx);
+    showToast(`Deleted "${ctx.state.name}".`);
   }
 
-  /** Return to a blank setup screen (storage is handled by the caller). */
-  function resetToSetup() {
-    closeModal();
-    state.phase = 'setup';
-    state.config = null;
-    state.players = [];
-    state.courts = [];
-    state.history = [];
-    state.matchSeq = 0;
-    state.nextMatchId = 1;
-    state.waitOverride = null;
-    draft = { numPlayers: 8, numCourts: 2, matchType: 'doubles', names: [] };
-
-    el.sessionMeta.html = '';
-    el.printCourts.textContent = '';
-    el.printPlayerCount.textContent = '';
-    el.printPlayerNames.html = '';
-    el.courtsGrid.html = '';
-    el.waitingList.html = '';
-    el.queueMode.textContent = '';
-    el.btnResetOrder.hidden = true;
-    el.statsBody.html = '';
-    el.statsCards.html = '';
-    el.pmList.html = '';
-    el.statsHead.html =
-      '<th>Player</th><th>Games</th><th>Wins</th><th>Losses</th><th>Win Rate</th>';
-    el.historyList.html = '';
-    el.historyPrintBody.innerHTML = '';
-    ['stats-card', 'history-card', 'players-card'].forEach(id => {
-      const card = document.getElementById(id);
-      if (card) card.open = true;
-    });
-
+  /** Clear the new-session form back to its defaults. */
+  function resetSetupForm() {
+    draft = { numPlayers: 8, numCourts: 2, matchType: 'doubles', names: [], sessionName: '' };
     el.form.reset();
-    el.inputPlayers.value = draft.numPlayers;
-    el.inputCourts.value = draft.numCourts;
-    [...el.matchTypeToggle.children].forEach(btn => btn.classList.toggle('active', btn.dataset.value === draft.matchType));
-    renderPlayerNameInputs();
-    updateCalcPreview();
-    showView('setup');
+    el.setupErrors.hidden = true;
+    el.setupErrors.innerHTML = '';
+    renderSetup();
   }
 
   function persist() {
-    Storage.saveSession(state);
+    if (active) Storage.saveSession(active.id, state);
+  }
+
+  // ---------- multiple sessions ----------
+
+  /** "Session N", using the first number no other session has. */
+  function defaultSessionName() {
+    const taken = new Set(Storage.listSessions().map(s => (s.name || '').toLowerCase()));
+    let n = 1;
+    while (taken.has(`session ${n}`)) n++;
+    return `Session ${n}`;
+  }
+
+  function renderSessionsToolbar() {
+    const count = contexts.size;
+    const settingUp = !el.setupView.hidden;
+    el.sessionsToolbar.hidden = count === 0;
+    el.sessionsCount.textContent = count;
+    el.btnNewSession.hidden = settingUp;
+    el.btnToggleAll.hidden = settingUp || count < 2;
+    el.btnToggleAll.textContent = [...contexts.values()].some(ctx => ctx.root.open) ? 'Collapse all' : 'Expand all';
+    el.btnCancelSetup.hidden = count === 0;
+  }
+
+  /** Show the new-session form. Existing sessions keep running. */
+  function startNewSession() {
+    closeModal();
+    showView('setup');
+    window.scrollTo({ top: 0 });
+  }
+
+  function openRenameSessionModal() {
+    openModal({
+      title: 'Rename Session',
+      saveLabel: 'Save Name',
+      body: `
+        <div class="field">
+          <label class="field-label" for="m-session-name">Session name</label>
+          <input type="text" id="m-session-name" maxlength="${MAX_SESSION_NAME}" value="${escapeHtml(state.name)}" autocomplete="off" />
+        </div>`,
+      onSave: () => {
+        const name = q('#m-session-name').value.trim();
+        if (!name) return 'Enter a session name.';
+        state.name = name;
+        persist();
+        renderSession();
+        return null;
+      },
+    });
   }
 
   // ---------- rendering: setup ----------
 
   function renderSetup() {
+    el.inputSessionName.value = draft.sessionName || '';
+    el.inputSessionName.placeholder = defaultSessionName();
     el.inputPlayers.value = draft.numPlayers;
     el.inputCourts.value = draft.numCourts;
     [...el.matchTypeToggle.children].forEach(btn => btn.classList.toggle('active', btn.dataset.value === draft.matchType));
@@ -1226,11 +1340,7 @@ const App = (() => {
 
   // ---------- rendering: session ----------
 
-  /**
-   * Lookups built once per full redraw (instead of once per player), which
-   * keeps large groups (hundreds of players) responsive. Outside a redraw the
-   * helpers fall back to computing directly.
-   */
+  /** Lookups built once per redraw so large groups stay fast. */
   let renderCache = null;
 
   function buildRenderCache() {
@@ -1263,7 +1373,7 @@ const App = (() => {
     return ids.map(playerName).join(' + ');
   }
 
-  /** History names: the name used at the time, plus the current name if it has changed. */
+  /** Name used at match time, plus the current name if it changed. */
   function historyNames(ids, snapshot) {
     return ids.map((id, i) => {
       const now = playerName(id);
@@ -1296,9 +1406,9 @@ const App = (() => {
   }
 
   function renderSession() {
-    const metaBefore = el.sessionMeta.html;
     renderCache = buildRenderCache();
     try {
+      renderSessionHead();
       renderMeta();
       renderCourts();
       renderQueue();
@@ -1308,8 +1418,33 @@ const App = (() => {
     } finally {
       renderCache = null;
     }
-    // Re-measure the header only when the summary chips actually changed
-    if (el.sessionMeta.html !== metaBefore) syncHeaderSpace();
+    renderSessionsToolbar();
+  }
+
+  /** Session header: name plus a one-line status, readable while collapsed. */
+  function renderSessionHead() {
+    const playing = state.courts.filter(ct => ct.activeMatch).length;
+    const waiting = Session.waitingOrder(state).length;
+    const matches = state.history.length;
+    el.headName.textContent = state.name;
+    el.headStatus.textContent = [
+      `${playing} ${plural(playing, 'court')} playing`,
+      `${waiting} waiting`,
+      `${matches} ${matches === 1 ? 'match' : 'matches'} played`,
+    ].join(' · ');
+
+    // Who's on each court right now
+    const names = ids => ids.map(id => {
+      const p = renderCache ? renderCache.byId.get(id) : Session.playerById(state, id);
+      return escapeHtml(p ? p.name : '?');
+    }).join(' &amp; ');
+    el.headPlaying.html = state.courts.map(ct => {
+      const m = ct.activeMatch;
+      const match = m
+        ? `<span class="hp-team">${names(m.team1)}</span><span class="hp-vs">vs</span><span class="hp-team">${names(m.team2)}</span>`
+        : '<span class="hp-empty">Waiting for players</span>';
+      return `<li><span class="hp-court">Court ${ct.id}</span>${match}</li>`;
+    }).join('');
   }
 
   function renderMeta() {
@@ -1328,12 +1463,12 @@ const App = (() => {
       chip('trophy', doubles ? 'Doubles' : 'Singles', 'Match Type') +
       (doubles ? chip('link', pairs, plural(pairs, 'Fixed Pair')) : '');
 
-    // Print list: everyone who took part (players who left are marked)
+    // Print list: everyone who played (players who left are marked)
     const roster = pdfRoster();
     const leftCount = roster.filter(r => r.left).length;
     el.printCourts.textContent = `${c.numCourts} Court${c.numCourts === 1 ? '' : 's'}`;
     el.printPlayerCount.textContent = leftCount ? `${roster.length} · ${leftCount} left` : roster.length;
-    // more players -> more columns, filled top-to-bottom
+    // more players = more columns, filled top to bottom
     const n = roster.length;
     const cols = PdfExport.playerColumns(n);
     el.printPlayerNames.style.setProperty('--cols', cols);
@@ -1343,7 +1478,7 @@ const App = (() => {
       .join('');
   }
 
-  /** Session roster for print/PDF: join order, with joined/left notes. */
+  /** Player list for the PDF: in join order, with joined/left notes. */
   function pdfRoster() {
     return state.players.slice().sort((a, b) => a.id - b.id).map(p => {
       const left = !Queue.isActive(p);
@@ -1466,19 +1601,12 @@ const App = (() => {
 
   // ---- waiting queue ----
 
-  /**
-   * "Next to play" forecast. The next pick happens right after a match ends,
-   * so simulate exactly that: the match that started
-   * earliest finishes (the result doesn't matter to matchmaking), its players
-   * rejoin with updated games/history, and the same pick is run with the same
-   * seed the real one will use.
-   */
+  /** "Next to play": pretend the earliest match ends and run the same pick the app will use. */
   function forecastNextUp(busyIds) {
     const live = state.courts.filter(c => c.activeMatch);
     const { matchType } = state.config;
-    // Empty courts are refilled the moment that becomes possible, so any court
-    // still empty now can't be filled yet: the next pick always follows a match
-    // ending. Only with no match in progress at all is there nothing to simulate.
+    // Empty courts fill as soon as they can, so the next pick always comes after a match ends.
+    // With no match in progress, there's nothing to predict.
     if (!live.length) {
       return Queue.nextUpIds(state.players, busyIds, matchType, state.matchSeq, state.waitOverride, state.nextMatchId);
     }
@@ -1488,16 +1616,11 @@ const App = (() => {
     Queue.commitMatch(players, { courtId: 0, team1: finishing.team1, team2: finishing.team2, winner: 'team1', team1Score: null, team2Score: null }, seq);
     const stillBusy = new Set([...busyIds].filter(id => !finishing.team1.includes(id) && !finishing.team2.includes(id)));
     const ids = Queue.nextUpIds(players, stillBusy, matchType, seq, state.waitOverride, state.nextMatchId);
-    // Only highlight people who are actually waiting right now
+    // Only highlight players who are waiting right now
     return new Set([...ids].filter(id => !busyIds.has(id)));
   }
 
-  /**
-   * The waiting list in the order people will actually be called: the
-   * forecast "Next to play" group first, then everyone else in rotation order.
-   * Numbers and the ↑ ↓ arrows both use this order, so what you see is what
-   * happens.
-   */
+  /** Waiting list in the order players will be called: "Next to play" first, then everyone else. */
   function callOrder(busyIds = getBusyPlayerIds()) {
     const waiting = Session.waitingOrder(state);
     const nextUp = forecastNextUp(busyIds);
@@ -1603,12 +1726,12 @@ const App = (() => {
   function renderStats() {
     const anyScores = state.players.some(p => p.scoredGames > 0);
     const players = state.players
-      .slice() // everyone who took part, including players who left
+      .slice() // everyone who played, including players who left
       .sort((a, b) => b.gamesPlayed - a.gamesPlayed || a.name.localeCompare(b.name));
     const removedTag = p => (Queue.isActive(p) ? '' : ` <span class="muted-tag">left${p.leftAt ? ` ${escapeHtml(p.leftAt)}` : ''}</span>`);
     const pts = (p, key) => (p.scoredGames > 0 ? p[key] : '—');
 
-    // Desktop / tablet table
+    // Desktop/tablet table
     el.statsBody.html = players.map(p => `
       <tr>
         <td class="player-name-cell">${escapeHtml(p.name)}${removedTag(p)}</td>
@@ -1622,7 +1745,7 @@ const App = (() => {
     el.statsHead.html =
       `<th>Player</th><th class="num">Games</th><th class="num">Wins</th><th class="num">Losses</th><th class="num">Win Rate</th>${extraHeaders}`;
 
-    // Mobile cards: key numbers first, points tucked into an expandable row
+    // Phone cards: main numbers first, points in an expandable row
     el.statsCards.html = players.map(p => `
       <article class="stat-card">
         <div class="stat-card-name">${escapeHtml(p.name)}${removedTag(p)}</div>
@@ -1645,7 +1768,7 @@ const App = (() => {
 
   // ---- history ----
 
-  /** PDF-only list view: one row per match, newest first (same order as the cards). */
+  /** PDF list: one row per match, newest first. */
   function renderHistoryPrint() {
     if (!state.history.length) {
       el.historyPrintBody.innerHTML = '<tr><td colspan="7" class="hp-empty">No matches completed yet.</td></tr>';
@@ -1676,7 +1799,7 @@ const App = (() => {
   }
 
   function renderHistory() {
-    // The print-only list is built just before printing (preparePrint), not on every change
+    // The print list is built right before printing, not on every change
     if (!state.history.length) {
       el.historyList.html = '<p class="empty-note">No matches completed yet.</p>';
       return;
@@ -1714,21 +1837,13 @@ const App = (() => {
 
   // ---------- export ----------
 
-  /**
-   * Vanilla-JS PDF export: prints a stripped-down, paper-friendly view
-   * (player stats + match history only) via the browser's native
-   * "Save as PDF" print destination — no PDF library required.
-   */
-  /**
-   * Export PDF builds the file directly (js/pdf.js), so it looks the same on
-   * phones and computers and has no browser header/footer (page address/date).
-   * If the PDF tool can't load (e.g. offline), fall back to the print dialog;
-   * Ctrl+P / the browser menu still use the print stylesheet.
-   */
+  /** Export PDF: builds the file with js/pdf.js so it looks the same on every device.
+   *  If that fails (e.g. offline), opens the print dialog instead. */
   let exporting = false;
   async function exportPdf() {
-    if (exporting || state.phase !== 'session') return;
+    if (exporting || !active) return;
     exporting = true;
+    const ctx = active;
     const btn = el.btnExportPdf;
     const original = btn.innerHTML;
     btn.disabled = true;
@@ -1738,6 +1853,7 @@ const App = (() => {
     } catch (err) {
       console.warn('PDF export failed, using the print dialog instead.', err);
       showToast('Couldn’t create the PDF here, opening the print dialog instead.');
+      activate(ctx);
       window.print();
     } finally {
       btn.disabled = false;
@@ -1746,10 +1862,11 @@ const App = (() => {
     }
   }
 
-  /** Everything the PDF needs, in display order (history newest first, as on screen). */
+  /** Data for the PDF, newest match first. */
   function buildPdfData() {
     const c = state.config;
     return {
+      sessionName: state.name,
       dateLabel: localDateISO(new Date()),
       courts: c.numCourts,
       matchType: c.matchType === 'doubles' ? 'Doubles' : 'Singles',
@@ -1770,23 +1887,26 @@ const App = (() => {
     };
   }
 
-  /**
-   * Runs for EVERY print (Export PDF button, Ctrl+P, browser menu): opens the
-   * history section (a collapsed <details> would print empty) and sets a dated
-   * title, which browsers use as the PDF file name. afterprint restores both.
-   */
+  /** Runs before any print: opens the history section and sets a dated title
+   *  (used as the PDF file name). Both are undone after printing. */
   let printRestore = null;
   function preparePrint() {
-    if (printRestore || state.phase !== 'session') return;
-    renderHistoryPrint(); // build the print-only list now
-    const historyDetails = document.getElementById('history-card');
+    if (printRestore || !active) return;
+    renderHistoryPrint(); // build the print list now
+    const block = active.root;
+    const historyDetails = el.historyCard;
     const originalTitle = document.title;
-    const wasOpen = historyDetails.open;
+    const wasOpen = [block.open, historyDetails.open];
+    block.open = true;
     historyDetails.open = true;
-    document.title = `Pickleball Match History - ${localDateISO(new Date())}`;
+    block.classList.add('print-target');
+    document.body.classList.add('is-printing-session');
+    document.title = `Pickleball Match History - ${state.name} - ${localDateISO(new Date())}`;
     printRestore = () => {
       document.title = originalTitle;
-      historyDetails.open = wasOpen;
+      [block.open, historyDetails.open] = wasOpen;
+      block.classList.remove('print-target');
+      document.body.classList.remove('is-printing-session');
       printRestore = null;
     };
   }
@@ -1795,7 +1915,7 @@ const App = (() => {
     if (printRestore) printRestore();
   }
 
-  /** YYYY-MM-DD in the device's own time zone (toISOString would give UTC). */
+  /** Today's date as YYYY-MM-DD in local time. */
   function localDateISO(d) {
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -1804,7 +1924,7 @@ const App = (() => {
   // ---------- utils ----------
 
   function escapeHtml(str) {
-    // Safe for both element content and quoted attribute values.
+    // Safe for text and attribute values.
     return (str == null ? '' : String(str))
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')

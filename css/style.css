@@ -7,14 +7,14 @@
   /* Palette */
   --primary: #A489B8;        /* lavender: accents, active states, highlights */
   --primary-strong: #8F72A5; /* hover on lavender accents */
-  --plum: #6F527F;           /* deep plum: headings, filled buttons (white text passes AA) */
+  --plum: #6F527F;           /* deep plum: headings, filled buttons */
   --plum-hover: #5C4369;
   --lav-50: #F3EDF7;         /* light lavender: page background, team boxes */
   --lav-100: #E5D8ED;        /* soft lavender: chips, soft buttons */
   --lav-25: #FAF7FC;
   --white: #FFFFFF;
   --text: #33283B;
-  --text-2: #786C82;         /* secondary text (slightly darker than #81758A to pass 4.5:1) */
+  --text-2: #786C82;         /* secondary text */
   --border: #E9E1EC;
   --border-strong: #DACDE3;
 
@@ -91,13 +91,11 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 /* ---------- Header ---------- */
-/* Pinned to the top at every width; condenses once the page is scrolled (JS adds .is-condensed) */
+/* Header stays at the top and shrinks after scrolling */
 html { scroll-padding-top: 96px; }
 
-/* The header floats above the page (fixed) and the page keeps a spacer equal
-   to the header's FULL height (--header-h, measured in JS). Shrinking or
-   growing the header therefore never moves the page content, which is what
-   used to make the header flicker/jump at a certain scroll height. */
+/* The header is fixed. A spacer (--header-h) holds its full height,
+   so the page doesn't jump when the header shrinks. */
 html { overflow-anchor: none; }
 body { padding-top: var(--header-h, 88px); }
 
@@ -130,8 +128,7 @@ body { padding-top: var(--header-h, 88px); }
 .app-header.is-condensed .summary-chip { padding-top: 4px; padding-bottom: 4px; }
 .app-header.is-condensed .summary-icon { width: 28px; height: 28px; border-radius: 8px; }
 
-/* Tablet: chips sit on their own row, so that row hides while condensed.
-   (Phones keep them pinned instead, with a collapse toggle — see below.) */
+/* Tablet: hide the chip row when the header shrinks (phones are handled below). */
 @media (min-width: 768px) and (max-width: 1099px) {
   .app-header.is-condensed .summary-bar { display: none; }
 }
@@ -145,7 +142,7 @@ body { padding-top: var(--header-h, 88px); }
   .summary-bar > .summary-chips { flex: 1 1 auto; }
   body:not(.is-session) .summary-bar { display: none; }
 
-  /* Pinned + scrolled: compact chips (no icons) so values and labels fit */
+  /* Shrunk header: smaller chips without icons */
   .app-header.is-condensed .summary-chips { gap: 5px; }
   .app-header.is-condensed .summary-chip { padding: 5px 2px; gap: 0; }
   .app-header.is-condensed .summary-icon { display: none; }
@@ -154,9 +151,7 @@ body { padding-top: var(--header-h, 88px); }
 }
 
 /* ---------- Rendering performance ----------
-   Let the browser skip layout/paint for cards that are off-screen (long
-   histories, big player lists). The intrinsic sizes are estimates used only
-   for the scrollbar until a card is actually drawn. */
+   Skip drawing cards that are off-screen. Sizes are estimates for the scrollbar. */
 .history-card { content-visibility: auto; contain-intrinsic-size: auto 132px; }
 .pm-card { content-visibility: auto; contain-intrinsic-size: auto 78px; }
 .stat-card { content-visibility: auto; contain-intrinsic-size: auto 96px; }
@@ -529,7 +524,7 @@ main {
 .btn-danger-ghost { background: var(--white); border-color: var(--error-line); color: var(--error-fg); }
 .btn-danger-ghost:hover:not(:disabled) { background: var(--error-bg); }
 
-/* kept for backwards compatibility with any older markup */
+/* old class name, still supported */
 .btn-ghost { background: transparent; border-color: var(--border-strong); color: var(--text-2); }
 
 .btn-large { width: 100%; min-height: 54px; font-size: 1rem; }
@@ -1112,7 +1107,7 @@ main {
 .field-label-note { font-weight: 500; color: var(--text-2); }
 
 @media (max-width: 767px) {
-  #btn-add-players { width: 100%; min-height: 44px; }
+  [data-el="btn-add-players"] { width: 100%; min-height: 44px; }
 }
 
 .pm-list {
@@ -1183,7 +1178,7 @@ main {
   margin-bottom: 14px;
 }
 
-.history-actions #btn-clear-history { margin-left: auto; }
+.history-actions [data-el="btn-clear-history"] { margin-left: auto; }
 
 .history-list {
   display: grid;
@@ -1590,14 +1585,14 @@ main {
 .print-info-row + .print-info-row { border-top: 1px solid #eee; }
 .print-info-label { font-weight: 700; color: #333; flex-shrink: 0; white-space: nowrap; }
 
-/* PDF player list: numbered, multi-column (column count set from JS via --cols) */
+/* PDF player list: numbered columns (--cols set by JS) */
 .print-info-block { flex-direction: column; gap: 6px; }
 
 .print-players {
   list-style: none;
   margin: 0;
   padding: 0;
-  /* Grid filled column by column; --cols / --rows are set from JS */
+  /* Fills column by column; --cols and --rows are set by JS */
   display: grid;
   grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
   grid-template-rows: repeat(var(--rows, 1), auto);
@@ -1629,6 +1624,130 @@ main {
 .print-players .pp-name { color: #222; overflow-wrap: anywhere; }
 .print-players .pp-note { font-size: 7.5pt; color: #888; }
 .print-players li.is-left .pp-name { color: #777; font-style: italic; }
+
+/* ---------- Sessions: toolbar and collapsible session sections ---------- */
+.sessions-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.sessions-title { display: flex; align-items: center; gap: 10px; font-size: 1.15rem; font-weight: 800; color: var(--plum); }
+.sessions-toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.session-count {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--lav-100);
+  color: var(--plum);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+}
+.setup-back { margin-top: 10px; }
+.session-name-field { margin-bottom: 14px; }
+
+.sessions-list { display: flex; flex-direction: column; gap: 18px; }
+.session-block {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--lav-25);
+  box-shadow: var(--shadow-sm);
+  scroll-margin-top: calc(var(--header-h, 0px) + 12px);
+}
+.session-head {
+  display: flex;
+  align-items: center;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--r-lg);
+}
+.session-head::-webkit-details-marker { display: none; }
+.session-head::marker { content: ''; }
+.session-head:hover { background: var(--lav-50); }
+.session-block[open] > .session-head { border-bottom: 1px solid var(--border); border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.session-head-chevron {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  background: var(--white);
+  border: 1px solid var(--border);
+  color: var(--plum);
+  transform: rotate(-90deg);
+  transition: transform 0.2s ease;
+}
+.session-block[open] .session-head-chevron { transform: none; }
+.session-head-main { flex: 1 1 180px; min-width: 0; }
+.session-head-name { font-size: 1.12rem; font-weight: 800; color: var(--plum); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-head-status { font-size: 0.82rem; color: var(--text-2); margin-top: 2px; }
+.session-head-chips { justify-content: flex-end; gap: 8px; }
+.session-head-chips .summary-chip { padding: 5px 10px 5px 6px; box-shadow: none; }
+.session-head-chips .summary-icon { width: 28px; height: 28px; border-radius: 8px; }
+.session-head-chips .summary-icon .icon { width: 15px; height: 15px; }
+.session-head-chips .summary-text strong { font-size: 0.9rem; }
+.session-head-chips .summary-text span { font-size: 0.64rem; }
+.session-head-rename { flex: none; }
+
+/* Who's playing: only shown while the session is collapsed */
+.session-head-playing {
+  display: none;
+  flex: 1 1 100%;
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  gap: 6px 8px;
+  flex-wrap: wrap;
+}
+.session-block:not([open]) .session-head-playing { display: flex; }
+.session-head-playing li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-radius: var(--r-md);
+  background: var(--white);
+  border: 1px solid var(--border);
+  font-size: 0.86rem;
+  min-width: 0;
+}
+.hp-court {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--plum);
+  color: var(--white);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.hp-team { font-weight: 700; color: var(--text); }
+.hp-vs { font-size: 0.72rem; font-weight: 700; color: var(--text-2); text-transform: uppercase; }
+.hp-empty { color: var(--text-2); font-style: italic; }
+.session-body { padding: 16px; }
+
+@media (max-width: 760px) {
+  .session-head { padding: 12px; }
+  .session-head-main { order: 1; flex-basis: calc(100% - 100px); }
+  .session-head-chevron { order: 0; }
+  .session-head-rename { order: 2; }
+  .session-head-chips { order: 3; flex: 1 1 100%; justify-content: flex-start; }
+  .session-head-playing { order: 4; }
+  .session-head-playing li { flex: 1 1 100%; }
+  .session-body { padding: 12px 10px; }
+}
+@media (max-width: 520px) {
+  .sessions-toolbar-actions { width: 100%; }
+  .sessions-toolbar-actions .btn { flex: 1 1 0; }
+  .session-head-chips .summary-icon { display: none; }
+}
 
 /* ---------- Setup view (session setup screen) ---------- */
 .setup-view {
@@ -1951,7 +2070,7 @@ main {
 
 /* Phones */
 @media (max-width: 767px) {
-  /* Condensed sticky header on phones: brand row only */
+  /* Shrunk header on phones: logo row only */
   html { scroll-padding-top: 76px; }
   .app-header.is-condensed .brand-mark { width: 34px; height: 34px; border-radius: 10px; }
   .app-header.is-condensed .sponsor-logo { height: 30px; }
@@ -1992,7 +2111,7 @@ main {
   .pm-more { width: 40px; height: 40px; }
 
   .history-actions .btn { flex: 1; }
-  .history-actions #btn-clear-history { margin-left: 0; }
+  .history-actions [data-el="btn-clear-history"] { margin-left: 0; }
 
   .panel-danger .btn { width: 100%; }
 }
@@ -2040,15 +2159,14 @@ main {
    Print / PDF export: header + match history only
    ===================================================================== */
 @media print {
-  /* Zero page margin leaves the browser no room for its own header/footer
-     (page URL, date, title, page numbers). Page spacing comes from main's
-     padding, which is cloned onto every printed page. */
+  /* No page margin, so the browser can't add its own header/footer.
+     Spacing comes from main's padding instead. */
   @page { margin: 0; }
 
   body { background: #fff; color: #111; font-size: 12px; padding-top: 0; }
   .no-print { display: none !important; }
   .app { max-width: 100%; }
-  /* Padding is cloned onto every printed page, giving each page a margin */
+  /* This padding repeats on every printed page */
   main {
     padding: 1.4cm 1.5cm;
     -webkit-box-decoration-break: clone;
@@ -2056,7 +2174,13 @@ main {
   }
 
   .print-header + * { margin-top: 0; }
-  #history-card { margin-top: 4px; }
+  [data-el="history-card"] { margin-top: 4px; }
+
+  /* Only the session being printed, without its collapsible frame */
+  body.is-printing-session .session-block:not(.print-target),
+  .sessions-toolbar, .session-head { display: none !important; }
+  .session-block { border: 0; background: none; box-shadow: none; }
+  .session-body { padding: 0; }
 
   .print-header {
     display: block;
@@ -2083,11 +2207,10 @@ main {
   .print-sponsor { text-decoration: none; }
   .print-sponsor img { height: 52px; width: auto; }
 
-  /* Large, faint sponsor badge behind every page. position: fixed makes the
-     browser repeat it on each printed page; content sits above it. */
+  /* Large, faint sponsor badge behind every printed page */
   .print-watermark {
     display: block;
-    /* centred on the paper itself: no screen-width units (a phone's screen is ~375px) */
+    /* centred on the paper (no screen-width units) */
     position: fixed;
     inset: 0;
     margin: auto;

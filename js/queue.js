@@ -1,22 +1,15 @@
 /**
- * queue.js
- * Automatic rotation + team-building. DOM-free.
+ * queue.js: decides who plays next and makes the teams.
  *
- * Who plays next — two layers:
- *  1. Fairness (unchanged rule): fewest games first, then longest wait. Anyone
- *     below the current "games level" MUST be in the next match.
- *  2. Variety: among players tied at that level, every combination of the best
- *     candidates is scored and the one with the fewest repeat partners and
- *     opponents wins (new combinations first, recent repeats weigh more), with
- *     a small preference for longer waits. Randomness (seeded per match, so the
- *     "Next to play" preview matches what is generated) only breaks ties.
- *
+ * How the next players are picked:
+ *  1. Fairness: fewest games first, then longest wait.
+ *  2. Variety: among players tied on games, pick the group with the fewest
+ *     repeat partners and opponents. Randomness only breaks ties. *
  * Also:
- *  - Removed players (active === false) never enter the queue.
- *  - A temporary manual order pins players to the front; while it is active
- *    the organizer's order is followed exactly (teams are still varied).
- *  - Doubles fixed partners are one unit, ranked at their LOWER-priority
- *    member (no queue jumping), always on the same team; their opponents vary.
+ *  - Removed players are never picked.
+ *  - A manual order puts those players first, in that exact order.
+ *  - Fixed partners always play together on the same team, and wait for
+ *    whichever of them is further back in line.
  */
 
 const Queue = (() => {
@@ -27,7 +20,7 @@ const Queue = (() => {
       active: true,
       fixedPartnerId: null,
       gamesPlayed: 0,
-      queueGames: 0, // games counted for rotation; survives "Clear History"
+      queueGames: 0, // games counted for rotation (not reset by Clear History)
       wins: 0,
       losses: 0,
       lastActiveSeq: 0,
@@ -44,7 +37,7 @@ const Queue = (() => {
     return p.active !== false;
   }
 
-  /** Games used for rotation (falls back to gamesPlayed for very old saves). */
+  /** Games used for rotation (uses gamesPlayed for old saves). */
   function rotationGames(p) {
     return Number.isInteger(p.queueGames) ? p.queueGames : p.gamesPlayed;
   }
@@ -61,10 +54,7 @@ const Queue = (() => {
     return a.id - b.id;
   }
 
-  /**
-   * Waiting players in the order they will be called.
-   * `manualOrder` (optional) is a list of player ids pinned to the front.
-   */
+  /** Waiting players in the order they'll be called. `manualOrder` (optional) puts those ids first. */
   function getWaitingOrder(players, busyIds, currentSeq, manualOrder) {
     const auto = players
       .filter(p => isActive(p) && !busyIds.has(p.id))
@@ -85,43 +75,29 @@ const Queue = (() => {
     return front.concat(auto.filter(p => remaining.has(p.id)));
   }
 
-  /**
-   * Id of p's fixed partner if the partnership is active and applies
-   * (doubles only, mutual, partner still in the session); otherwise null.
-   */
+  /** Id of p's fixed partner if they can play together right now, otherwise null. */
   function activePartnerId(p, byId, matchType) {
     if (matchType !== 'doubles' || p.fixedPartnerId == null) return null;
     const q = byId.get(p.fixedPartnerId);
     return q && isActive(q) && q.fixedPartnerId === p.id ? q.id : null;
   }
 
-  /**
-   * Pick the next `perMatch` players from the waiting order, keeping fixed
-   * partners together. Returns an array of players, or null if no full match
-   * can be formed yet.
-   */
-  /**
-   * Group waiting players into units (single players or fixed pairs) in
-   * priority order. A pair is ranked at its later member; a player whose
-   * partner is on a court is left out (they wait to play together).
-   */
+  /** Group waiting players into singles and fixed pairs, in order.
+   *  A pair waits for its later member. A player whose partner is on court is skipped. */
   function buildUnits(waitingOrder, matchType, byId) {
     const index = new Map(waitingOrder.map((p, i) => [p.id, i]));
     const units = [];
     waitingOrder.forEach((p, i) => {
       const partnerId = activePartnerId(p, byId, matchType);
       if (partnerId == null) units.push([p]);
-      else if (!index.has(partnerId)) return; // partner is on a court: wait together
-      else if (index.get(partnerId) < i) units.push([byId.get(partnerId), p]); // ranked at later member
+      else if (!index.has(partnerId)) return; // partner is on court: wait together
+      else if (index.get(partnerId) < i) units.push([byId.get(partnerId), p]); // use the later member's place
     });
     return units;
   }
 
-  /**
-   * Strict-order selection: the next `perMatch` players exactly as the waiting
-   * order lists them (used while a manual order is active, and as the fairness
-   * baseline for the variety search). Returns players, or null.
-   */
+  /** The next `perMatch` players in exact waiting order (used for manual order
+   *  and as the fair starting point). Returns players, or null. */
   function selectPlayers(waitingOrder, perMatch, matchType, byId, allowPartial = false) {
     const units = buildUnits(waitingOrder, matchType, byId);
 
@@ -133,9 +109,7 @@ const Queue = (() => {
       return selected;
     }
 
-    // 2. Highest-priority combination of units that exactly fills the court.
-    //    Same result as plain greedy whenever greedy works; otherwise it skips
-    //    the fewest/lowest-ranked units needed (e.g. 3 singles ahead of a pair).
+    // 2. Find the earliest group that exactly fills the court, skipping as few players as possible.
     const singlesFrom = new Array(units.length + 1).fill(0);
     const pairsFrom = new Array(units.length + 1).fill(0);
     for (let i = units.length - 1; i >= 0; i--) {
@@ -167,19 +141,15 @@ const Queue = (() => {
     return rec.count * countWeight + recency * recencyWeight;
   }
 
-  // Variety weights: a repeat partner costs more than a repeat opponent, and a
-  // recent repeat (within the last 8 matches) costs extra.
+  // Repeat costs: a repeat partner costs more than a repeat opponent. Repeats in the last 8 matches cost extra.
   const PARTNER_REPEAT = 120;
   const PARTNER_RECENT = 20;
   const OPPONENT_REPEAT = 40;
   const OPPONENT_RECENT = 8;
   const RECENT_WINDOW = 8;
-  // Among tied candidates, each match less of waiting costs this much.
-  // Tuned by simulation for SHORT WAITS: longest sit-outs match the old strict
-  // rotation in most setups, while variety still decides among players who
-  // have waited equally long. Lower = more mixing, higher = less waiting.
+  // Cost per match of waiting, among tied players. Higher = shorter waits, lower = more mixing.
   const WAIT_WEIGHT = 200;
-  // How many tied candidates (units) are considered for the variety search.
+  // How many tied players/pairs to consider when looking for variety.
   const POOL_CAP = 14;
 
   function isFixedPair(a, b) {
@@ -187,7 +157,7 @@ const Queue = (() => {
   }
 
   function teammatePenalty(p1, p2, currentSeq) {
-    if (isFixedPair(p1, p2)) return 0; // their permanent partnership is not a "repeat"
+    if (isFixedPair(p1, p2)) return 0; // fixed partners don't count as a repeat
     return historyPenalty(p1.teammates[p2.id], currentSeq, PARTNER_REPEAT, RECENT_WINDOW, PARTNER_RECENT);
   }
 
@@ -195,7 +165,7 @@ const Queue = (() => {
     return historyPenalty(p1.opponents[p2.id], currentSeq, OPPONENT_REPEAT, RECENT_WINDOW, OPPONENT_RECENT);
   }
 
-  /** Small seeded RNG (mulberry32) so a given match always resolves ties the same way. */
+  /** Seeded random numbers, so the same match always breaks ties the same way. */
   function makeRng(seed) {
     let a = (Math.floor(seed) >>> 0) || 0x9e3779b9;
     return () => {
@@ -206,7 +176,7 @@ const Queue = (() => {
     };
   }
 
-  /** True if no mutual fixed pair among these players is split across teams. */
+  /** True if no fixed pair is split onto different teams. */
   function keepsFixedPairs(team1, team2, matchType) {
     if (matchType !== 'doubles') return true;
     const all = team1.concat(team2);
@@ -219,7 +189,7 @@ const Queue = (() => {
     );
   }
 
-  /** Variety cost of one line-up: repeat partners + repeat opponents. */
+  /** Variety cost of a line-up: repeat partners + repeat opponents. */
   function lineupCost(team1, team2, currentSeq) {
     let cost = 0;
     if (team1.length === 2) cost += teammatePenalty(team1[0], team1[1], currentSeq);
@@ -228,10 +198,7 @@ const Queue = (() => {
     return cost;
   }
 
-  /**
-   * Best way to split the chosen players into two teams (never separating a
-   * fixed pair). Returns { team1, team2, cost }. `rng` breaks exact ties.
-   */
+  /** Best way to split players into two teams, keeping fixed pairs together. Returns { team1, team2, cost }. */
   function bestSplit(selected, matchType, currentSeq, rng = Math.random) {
     let combos;
     if (matchType === 'singles') {
@@ -249,24 +216,21 @@ const Queue = (() => {
     let best = null;
     combos.forEach(c => {
       const cost = lineupCost(c.team1, c.team2, currentSeq);
-      const key = cost + rng() * 0.5; // tie-break only
+      const key = cost + rng() * 0.5; // only breaks ties
       if (!best || key < best.key) best = { ...c, cost, key };
     });
-    // Randomly decide which side is "Team 1" (purely cosmetic variety)
+    // Randomly pick which side is Team 1
     if (rng() < 0.5) return { team1: best.team2, team2: best.team1, cost: best.cost };
     return { team1: best.team1, team2: best.team2, cost: best.cost };
   }
 
-  /** Kept for compatibility: best split without the side swap. */
+  /** Old version kept for compatibility: best split, no side swap. */
   function buildTeams(selected, matchType, currentSeq) {
     const s = bestSplit(selected, matchType, currentSeq, () => 0);
     return { team1: s.team1, team2: s.team2 };
   }
 
-  /**
-   * Variety-aware choice of who plays next (see header). Returns
-   * { team1, team2 } of players, or null if no full match can be formed.
-   */
+  /** Pick who plays next (see top of file). Returns { team1, team2 }, or null if there aren't enough players. */
   function chooseMatch(waitingOrder, perMatch, matchType, byId, currentSeq, rng) {
     const info = buildUnits(waitingOrder, matchType, byId).map(u => ({
       u,
@@ -275,17 +239,16 @@ const Queue = (() => {
       wait: Math.min(...u.map(p => currentSeq - p.lastActiveSeq)),
       jitter: rng(),
     }));
-    // Fairness order: lowest games level first, then longest wait; random among exact ties
+    // Fairness order: fewest games, then longest wait; random among exact ties
     info.sort((a, b) => a.level - b.level || b.wait - a.wait || a.jitter - b.jitter);
 
-    // Fairness baseline: the strictly-fair feasible group (same rule as before).
+    // The strictly fair group, used as the starting point.
     const baseline = fillExactly(info, perMatch);
     if (!baseline) return null;
     const level = Math.max(...baseline.map(i => i.level));
-    const mandatory = baseline.filter(i => i.level < level); // below the level: must play
+    const mandatory = baseline.filter(i => i.level < level); // players below the level must play
     const need = perMatch - mandatory.reduce((s, i) => s + i.size, 0);
-    // Only players tied at the current games level compete on variety, so the
-    // games-played spread stays exactly as fair as the strict rotation.
+    // Only players tied on games compete on variety, so games stay as even as before.
     const pool = info.filter(i => i.level === level).slice(0, POOL_CAP);
     const maxWait = Math.max(...pool.map(i => i.wait));
     const fixedPlayers = mandatory.flatMap(i => i.u);
@@ -315,7 +278,7 @@ const Queue = (() => {
     return { team1: split.team1, team2: split.team2 };
   }
 
-  /** First combination of units (in order) whose sizes add up to exactly `need`. */
+  /** First set of units (in order) that adds up to exactly `need` players. */
   function fillExactly(info, need) {
     const out = [];
     (function search(i, left) {
@@ -335,26 +298,19 @@ const Queue = (() => {
     return Array.isArray(manualOrder) && manualOrder.length > 0;
   }
 
-  /**
-   * Seed for a given match. It depends only on the upcoming match number, so
-   * the "Next to play" preview (worked out while the current match is still
-   * being played) uses the same tie-breaks as the real pick made right after.
-   */
+  /** Seed based on the next match number, so "Next to play" matches the real pick. */
   function seedFor(seed) {
     return (Number(seed) || 0) * 7919 + 17;
   }
 
-  /**
-   * The match the next free court would get. Shared by generateMatch and the
-   * "Next to play" preview so they agree.
-   */
+  /** The match the next free court would get. Used by generateMatch and "Next to play". */
   function planNext(players, busyIds, matchType, currentSeq, manualOrder, seed) {
     const perMatch = matchType === 'doubles' ? 4 : 2;
     const byId = new Map(players.map(p => [p.id, p]));
     const waitingOrder = getWaitingOrder(players, busyIds, currentSeq, manualOrder);
     const rng = makeRng(seedFor(seed));
     if (hasManualOrder(manualOrder) && waitingOrder.some(p => manualOrder.includes(p.id))) {
-      // Organizer's explicit order is followed exactly; teams are still varied.
+      // Follow the organizer's order exactly; teams are still mixed.
       const selected = selectPlayers(waitingOrder, perMatch, matchType, byId);
       if (!selected) return { plan: null, waitingOrder, byId, perMatch };
       const split = bestSplit(selected, matchType, currentSeq, rng);
@@ -363,10 +319,7 @@ const Queue = (() => {
     return { plan: chooseMatch(waitingOrder, perMatch, matchType, byId, currentSeq, rng), waitingOrder, byId, perMatch };
   }
 
-  /**
-   * Ids of the waiting players first in line for the next free court
-   * (fewer than a full match if not enough are waiting yet).
-   */
+  /** Ids of the players first in line for the next free court. */
   function nextUpIds(players, busyIds, matchType, currentSeq, manualOrder, seed) {
     const { plan, waitingOrder, byId, perMatch } = planNext(players, busyIds, matchType, currentSeq, manualOrder, seed);
     if (plan) return new Set(plan.team1.concat(plan.team2).map(p => p.id));
