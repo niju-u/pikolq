@@ -12,6 +12,8 @@
  *
  * Also:
  *  - Removed players are never picked.
+ *  - Players added mid-session play after the current "Next to play" group
+ *    (unless they're needed to fill a court).
  *  - A manual order puts those players first, in that exact order.
  *  - Fixed partners always play together on the same team, and wait for
  *    whichever of them is further back in line.
@@ -47,6 +49,11 @@ const Queue = (() => {
   /** True if p finished a game and no match has ended since, so p should rest. */
   function justPlayed(p, currentSeq) {
     return Number.isInteger(p.lastPlayedSeq) && p.lastPlayedSeq >= currentSeq;
+  }
+
+  /** True if p was just added and the current "Next to play" group hasn't gone on yet. */
+  function isHeld(p, currentSeq) {
+    return Number.isInteger(p.holdUntilSeq) && currentSeq < p.holdUntilSeq;
   }
 
   /** Games used for rotation (uses gamesPlayed for old saves). */
@@ -343,7 +350,7 @@ const Queue = (() => {
     if (!playedTogetherLast(rested)) return null;
     const games = players.filter(isActive).map(p => rotationGames(p) + (busyIds.has(p.id) ? 1 : 0));
     if (Math.max(...games) - Math.min(...games) > MIX_MAX_SPREAD) return null;
-    const candidates = fullOrder.filter(p => !justPlayed(p, currentSeq) || (p.streak || 0) < 2);
+    const candidates = fullOrder.filter(p => !isHeld(p, currentSeq) && (!justPlayed(p, currentSeq) || (p.streak || 0) < 2));
     if (candidates.some(p => p.fixedPartnerId != null)) return null;
     const minGames = Math.min(...candidates.map(rotationGames));
     const restedIds = new Set(rested.map(p => p.id));
@@ -376,17 +383,23 @@ const Queue = (() => {
     const byId = new Map(players.map(p => [p.id, p]));
     const fullOrder = getWaitingOrder(players, busyIds, currentSeq, manualOrder);
     // Rest rule: players who just finished go to the back and are only used if needed.
-    const rested = fullOrder.filter(p => !justPlayed(p, currentSeq));
+    const rested = fullOrder.filter(p => !justPlayed(p, currentSeq) && !isHeld(p, currentSeq));
+    // Newly added players wait for the current "Next to play" group; used only if nobody else can fill the court
+    const held = fullOrder.filter(p => !justPlayed(p, currentSeq) && isHeld(p, currentSeq));
     // If some must go straight back on: fewest games first, then the shortest run of games in a row
     const tired = fullOrder.filter(p => justPlayed(p, currentSeq))
       .sort((a, b) => rotationGames(a) - rotationGames(b) || (a.streak || 0) - (b.streak || 0) || comparePriority(a, b, currentSeq));
-    const waitingOrder = rested.concat(tired);
+    const waitingOrder = rested.concat(tired, held);
     const result = plan => ({ plan, waitingOrder, byId, perMatch });
 
     const rng = makeRng(seedFor(seed));
-    if (hasManualOrder(manualOrder) && rested.some(p => manualOrder.includes(p.id))) {
+    // The organizer's manual order can bring a newly added player forward
+    const manualPool = hasManualOrder(manualOrder)
+      ? fullOrder.filter(p => !justPlayed(p, currentSeq) && (!isHeld(p, currentSeq) || manualOrder.includes(p.id)))
+      : rested;
+    if (hasManualOrder(manualOrder) && manualPool.some(p => manualOrder.includes(p.id))) {
       // Follow the organizer's order exactly (rested players only); teams are still mixed.
-      const selected = selectPlayers(rested, perMatch, matchType, byId);
+      const selected = selectPlayers(manualPool, perMatch, matchType, byId);
       if (selected) {
         const split = bestSplit(selected, matchType, currentSeq, rng);
         return result({ team1: split.team1, team2: split.team2 });
@@ -399,7 +412,8 @@ const Queue = (() => {
       const plan = chooseMatch(rested, perMatch, matchType, byId, currentSeq, rng);
       if (plan) return result(plan);
     }
-    // Not enough rested players: take every rested player, then as few who just played as needed.
+    // Not enough rested players: take every rested player, then as few who just played as needed,
+    // and newly added players only if that still isn't enough.
     if (rested.length === fullOrder.length) return result(null);
     const selected = selectPlayers(waitingOrder, perMatch, matchType, byId);
     if (!selected) return result(null);
@@ -480,6 +494,7 @@ const Queue = (() => {
     isActive,
     rotationGames,
     justPlayed,
+    isHeld,
     comparePriority,
     getWaitingOrder,
     activePartnerId,

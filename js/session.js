@@ -178,6 +178,8 @@ const Session = (() => {
     const baseline = others.length ? Math.min(...others.map(Queue.rotationGames)) : 0;
     p.queueGames = Math.max(Queue.rotationGames(p), baseline);
     p.lastActiveSeq = state.matchSeq;
+    // Not picked for the current "Next to play" group: eligible once one more match has ended
+    p.holdUntilSeq = state.matchSeq + 2;
   }
 
   function restorePlayer(state, id) {
