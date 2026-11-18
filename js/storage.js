@@ -1,13 +1,13 @@
 /**
- * storage.js
- * Thin localStorage wrapper. Knows nothing about the queue algorithm.
- *
- * Every access is guarded: when the browser blocks storage (some privacy
- * modes, embedded in-app browsers) the app keeps working, it just can't save.
+ * storage.js: saves and loads sessions in localStorage.
+ * Each session is saved under its own key, plus a list of all sessions.
+ * If the browser blocks storage, the app still works but can't save.
  */
 
 const Storage = (() => {
-  const KEY = 'pbq_session_v1';
+  const LEGACY_KEY = 'pbq_session_v1';   // single session, before multiple sessions existed
+  const LIST_KEY = 'pbq_sessions_v1';    // [{ id, name, createdAt }]
+  const SESSION_PREFIX = 'pbq_s_';       // + id
   const DRAFT_KEY = 'pbq_setup_draft_v1';
 
   function safe(fn, fallback, label) {
@@ -29,17 +29,59 @@ const Storage = (() => {
     }
   }
 
-  function saveSession(state) {
-    safe(() => localStorage.setItem(KEY, JSON.stringify(state)), undefined, 'save the session');
+  // ---------- session list ----------
+
+  function listSessions() {
+    const list = parse(safe(() => localStorage.getItem(LIST_KEY), null, 'load the session list'));
+    return Array.isArray(list) ? list.filter(s => s && typeof s.id === 'string') : [];
   }
 
-  function loadSession() {
-    return parse(safe(() => localStorage.getItem(KEY), null, 'load the session'));
+  function writeList(list) {
+    safe(() => localStorage.setItem(LIST_KEY, JSON.stringify(list)), undefined, 'save the session list');
   }
 
-  function clearSession() {
-    safe(() => localStorage.removeItem(KEY), undefined, 'clear the session');
+  function newId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
+
+  /** Move the old single saved session into the session list (runs once). */
+  function migrateLegacy() {
+    const raw = safe(() => localStorage.getItem(LEGACY_KEY), null);
+    if (!raw) return;
+    const old = parse(raw);
+    if (old) {
+      const id = newId();
+      const name = (old.name && String(old.name)) || 'Session 1';
+      old.name = name;
+      safe(() => localStorage.setItem(SESSION_PREFIX + id, JSON.stringify(old)), undefined, 'move the old session');
+      writeList([...listSessions(), { id, name, createdAt: Date.now() }]);
+    }
+    safe(() => localStorage.removeItem(LEGACY_KEY), undefined);
+  }
+
+  // ---------- one session ----------
+
+  /** Save a session. Adds it to the list if it's new, and keeps its name in sync. */
+  function saveSession(id, state) {
+    safe(() => localStorage.setItem(SESSION_PREFIX + id, JSON.stringify(state)), undefined, 'save the session');
+    const list = listSessions();
+    const entry = list.find(s => s.id === id);
+    if (!entry) writeList([...list, { id, name: state.name || '', createdAt: Date.now() }]);
+    else if (entry.name !== state.name) { entry.name = state.name || ''; writeList(list); }
+  }
+
+  function loadSession(id) {
+    if (!id) return null;
+    return parse(safe(() => localStorage.getItem(SESSION_PREFIX + id), null, 'load the session'));
+  }
+
+  function deleteSession(id) {
+    safe(() => localStorage.removeItem(SESSION_PREFIX + id), undefined, 'delete the session');
+    writeList(listSessions().filter(s => s.id !== id));
+    safe(() => localStorage.removeItem(`pbq_pref_open_${id}`), undefined);
+  }
+
+  // ---------- setup draft ----------
 
   function saveDraft(draft) {
     safe(() => localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)), undefined, 'save the setup draft');
@@ -53,18 +95,20 @@ const Storage = (() => {
     safe(() => localStorage.removeItem(DRAFT_KEY), undefined, 'clear the setup draft');
   }
 
-  /**
-   * Call `callback(sessionOrNull)` when ANOTHER tab/window changes the saved
-   * session (the 'storage' event never fires in the tab that wrote it).
-   */
-  function onSessionChangedElsewhere(callback) {
+  /** Tell the app when another tab changes saved data.
+   *  callback({ type: 'session', id, session }) | ({ type: 'list' }) | ({ type: 'cleared' }) */
+  function onChangedElsewhere(callback) {
     window.addEventListener('storage', e => {
-      if (e.key === null) callback(null); // storage cleared entirely
-      else if (e.key === KEY) callback(parse(e.newValue));
+      if (e.storageArea !== localStorage) return;
+      if (e.key === null) callback({ type: 'cleared' }); // all storage was cleared
+      else if (e.key === LIST_KEY) callback({ type: 'list' });
+      else if (e.key.startsWith(SESSION_PREFIX)) {
+        callback({ type: 'session', id: e.key.slice(SESSION_PREFIX.length), session: parse(e.newValue) });
+      }
     });
   }
 
-  /** Small per-device UI preferences (e.g. collapsed sections). */
+  /** Small per-device settings (e.g. collapsed sections). */
   const PREF_PREFIX = 'pbq_pref_';
   function getPref(name, fallback = null) {
     const raw = safe(() => localStorage.getItem(PREF_PREFIX + name), null);
@@ -74,5 +118,8 @@ const Storage = (() => {
     safe(() => localStorage.setItem(PREF_PREFIX + name, String(value)), undefined);
   }
 
-  return { saveSession, loadSession, clearSession, saveDraft, loadDraft, clearDraft, onSessionChangedElsewhere, getPref, setPref };
+  return {
+    newId, migrateLegacy, listSessions, saveSession, loadSession, deleteSession,
+    saveDraft, loadDraft, clearDraft, onChangedElsewhere, getPref, setPref,
+  };
 })();

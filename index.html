@@ -14,14 +14,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
-<link rel="stylesheet" href="css/style.css?v=56" />
+<link rel="stylesheet" href="css/style.css?v=60" />
 </head>
 <body>
 <header class="app-header no-print">
   <div class="header-inner">
     <div class="brand">
       <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
-        <!-- Paddle: face, edge guard, throat and grip share ONE rotation so they stay aligned -->
+        <!-- Paddle (all parts rotated together) -->
         <g transform="rotate(35 20 24)">
           <rect x="11" y="4" width="18" height="22" rx="6.5" fill="#6F527F" />
           <rect x="13.5" y="6.5" width="13" height="17" rx="4.4" fill="none" stroke="#A489B8" stroke-width="1.2" />
@@ -40,11 +40,6 @@
       </div>
     </div>
 
-    <!-- Session summary card (compacts automatically when the header shrinks on scroll) -->
-    <div class="summary-bar">
-      <div class="summary-chips" id="session-meta" aria-label="Session summary" hidden></div>
-    </div>
-
     <a class="sponsor" href="https://www.facebook.com/share/19PkqEfUcM/?mibextid=wwXIfr" target="_blank" rel="noopener noreferrer" title="Visit Pickle sa Balay on Facebook" aria-label="Sponsored by Pickle sa Balay. Opens their Facebook page in a new tab">
       <span class="sponsor-label">Sponsored by</span>
       <img class="sponsor-logo" src="img/pickle-sa-balay.webp" alt="Pickle sa Balay" width="640" height="298" />
@@ -54,6 +49,15 @@
 
 <div class="app">
   <main>
+    <!-- All sessions: count, collapse/expand and new session -->
+    <div class="sessions-toolbar no-print" id="sessions-toolbar" hidden>
+      <h2 class="sessions-title"><span class="panel-icon" data-icon="court"></span>Sessions <span class="session-count" id="sessions-count"></span></h2>
+      <div class="sessions-toolbar-actions">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-all">Collapse all</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-new-session"><span data-icon="plus"></span>New Session</button>
+      </div>
+    </div>
+
     <!-- ================= SETUP VIEW ================= -->
     <section id="setup-view" class="view setup-view">
       <form id="setup-form" class="setup-layout" novalidate>
@@ -61,13 +65,19 @@
           <span class="setup-eyebrow">New session</span>
           <h2>Set up today’s open play</h2>
           <p>Choose players and courts, enter everyone’s name, then generate the queue.</p>
+          <button type="button" class="btn btn-secondary btn-sm setup-back" id="btn-cancel-setup" hidden>Back to sessions</button>
         </div>
 
-        <!-- Left column on desktop (sticky): settings, errors, generate -->
+        <!-- Left column: settings and Generate button -->
         <aside class="setup-side">
           <div class="panel setup-config">
             <div class="panel-head">
               <h2 class="panel-title"><span class="panel-icon" data-icon="settings"></span>Session Setup</h2>
+            </div>
+
+            <div class="field session-name-field">
+              <label class="field-label" for="input-session-name">Session name <span class="field-label-note">(optional)</span></label>
+              <input type="text" id="input-session-name" maxlength="40" autocomplete="off" />
             </div>
 
             <div class="stepper-grid">
@@ -114,7 +124,7 @@
           </div>
         </aside>
 
-        <!-- Right column on desktop: player names -->
+        <!-- Right column: player names -->
         <div class="panel setup-names">
           <div class="panel-head">
             <h2 class="panel-title"><span class="panel-icon" data-icon="users"></span>Player Names</h2>
@@ -127,135 +137,152 @@
       </form>
     </section>
 
-    <!-- ================= SESSION VIEW ================= -->
-    <section id="session-view" class="view dashboard" hidden>
+    <!-- ================= SESSIONS ================= -->
+    <div class="sessions-list" id="sessions-list" hidden></div>
 
-      <!-- PDF-only background watermark (repeated on every printed page) -->
-      <img class="print-watermark" src="img/pickle-sa-balay-badge.webp" alt="" aria-hidden="true" width="1200" height="1200" />
-
-      <div class="print-header">
-        <div class="print-title-row">
-          <h1>Pickleball Match History</h1>
-          <a class="print-sponsor" href="https://www.facebook.com/share/19PkqEfUcM/?mibextid=wwXIfr" target="_blank" rel="noopener noreferrer" title="Visit Pickle sa Balay on Facebook">
-            <span>Sponsored by</span>
-            <img src="img/pickle-sa-balay.webp" alt="Pickle sa Balay" width="640" height="298" />
-          </a>
-        </div>
-        <div class="print-info">
-          <div class="print-info-row"><span class="print-info-label">Courts</span><span id="print-courts"></span></div>
-          <div class="print-info-row print-info-block">
-            <span class="print-info-label">Players (<span id="print-player-count"></span>)</span>
-            <ol class="print-players" id="print-player-names"></ol>
+    <!-- One copy of this is made for each session -->
+    <template id="session-template">
+      <details class="session-block" open>
+        <summary class="session-head">
+          <span class="session-head-chevron" data-icon="chevronDown"></span>
+          <div class="session-head-main">
+            <h2 class="session-head-name" data-el="head-name"></h2>
+            <p class="session-head-status" data-el="head-status"></p>
           </div>
-        </div>
-      </div>
+          <div class="summary-chips session-head-chips" data-el="session-meta"></div>
+          <button type="button" class="icon-btn session-head-rename" data-el="btn-rename" title="Rename session" aria-label="Rename session"><span data-icon="pencil"></span></button>
+          <!-- Who's on court, shown only while the session is collapsed -->
+          <ul class="session-head-playing" data-el="head-playing"></ul>
+        </summary>
+        <div class="view dashboard session-body">
 
-      <!-- Currently playing: the most important area -->
-      <section class="panel panel-courts no-print" aria-labelledby="courts-heading">
-        <div class="panel-head">
-          <h2 class="panel-title" id="courts-heading"><span class="panel-icon" data-icon="play"></span>Currently Playing</h2>
-          <span class="badge badge-success"><span class="badge-dot"></span>Session Active</span>
-        </div>
-        <div class="courts-grid" id="courts-grid"></div>
-      </section>
+          <!-- Watermark, only shown in the PDF -->
+          <img class="print-watermark" src="img/pickle-sa-balay-badge.webp" alt="" aria-hidden="true" width="1200" height="1200" />
 
-      <div class="dash-row no-print">
-        <!-- Waiting queue -->
-        <section class="panel panel-queue" id="waiting-card" aria-labelledby="queue-heading">
-          <div class="panel-head">
-            <h2 class="panel-title" id="queue-heading"><span class="panel-icon" data-icon="users"></span>Waiting Queue</h2>
-            <button type="button" class="link-btn" id="btn-reset-order" hidden>Reset to automatic</button>
+          <div class="print-header">
+            <div class="print-title-row">
+              <h1>Pickleball Match History</h1>
+              <a class="print-sponsor" href="https://www.facebook.com/share/19PkqEfUcM/?mibextid=wwXIfr" target="_blank" rel="noopener noreferrer" title="Visit Pickle sa Balay on Facebook">
+                <span>Sponsored by</span>
+                <img src="img/pickle-sa-balay.webp" alt="Pickle sa Balay" width="640" height="298" />
+              </a>
+            </div>
+            <div class="print-info">
+              <div class="print-info-row"><span class="print-info-label">Courts</span><span data-el="print-courts"></span></div>
+              <div class="print-info-row print-info-block">
+                <span class="print-info-label">Players (<span data-el="print-player-count"></span>)</span>
+                <ol class="print-players" data-el="print-player-names"></ol>
+              </div>
+            </div>
           </div>
-          <p class="queue-mode" id="queue-mode"></p>
-          <div class="queue" id="waiting-list"></div>
-        </section>
 
-        <!-- Player statistics -->
-        <details class="panel details-panel panel-stats" id="stats-card" open>
-          <summary class="panel-head details-summary">
-            <h2 class="panel-title"><span class="panel-icon" data-icon="chart"></span>Player Statistics</h2>
-            <span class="details-toggle"><span class="details-toggle-text"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
-          </summary>
-          <div class="details-body">
-            <div class="table-wrap">
-              <table class="stats-table" id="stats-table">
+          <!-- Courts in play -->
+          <section class="panel panel-courts no-print">
+            <div class="panel-head">
+              <h2 class="panel-title"><span class="panel-icon" data-icon="play"></span>Currently Playing</h2>
+              <span class="badge badge-success"><span class="badge-dot"></span>Session Active</span>
+            </div>
+            <div class="courts-grid" data-el="courts-grid"></div>
+          </section>
+
+          <div class="dash-row no-print">
+            <!-- Waiting queue -->
+            <section class="panel panel-queue" data-el="waiting-card">
+              <div class="panel-head">
+                <h2 class="panel-title"><span class="panel-icon" data-icon="users"></span>Waiting Queue</h2>
+                <button type="button" class="link-btn" data-el="btn-reset-order" hidden>Reset to automatic</button>
+              </div>
+              <p class="queue-mode" data-el="queue-mode"></p>
+              <div class="queue" data-el="waiting-list"></div>
+            </section>
+
+            <!-- Player statistics -->
+            <details class="panel details-panel panel-stats" data-el="stats-card" open>
+              <summary class="panel-head details-summary">
+                <h2 class="panel-title"><span class="panel-icon" data-icon="chart"></span>Player Statistics</h2>
+                <span class="details-toggle"><span class="details-toggle-text"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
+              </summary>
+              <div class="details-body">
+                <div class="table-wrap">
+                  <table class="stats-table" data-el="stats-table">
+                    <thead>
+                      <tr>
+                        <th>Player</th>
+                        <th>Games</th>
+                        <th>Wins</th>
+                        <th>Losses</th>
+                        <th>Win Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody data-el="stats-body"></tbody>
+                  </table>
+                </div>
+                <div class="stats-cards" data-el="stats-cards"></div>
+              </div>
+            </details>
+
+            <!-- Player management -->
+            <details class="panel details-panel panel-players" data-el="players-card" open>
+              <summary class="panel-head details-summary">
+                <h2 class="panel-title"><span class="panel-icon" data-icon="userCog"></span>Player Management</h2>
+                <span class="details-toggle"><span class="badge badge-neutral" data-el="pm-count"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
+              </summary>
+              <div class="details-body">
+                <div class="pm-toolbar">
+                  <p class="hint pm-hint" data-el="pm-hint"></p>
+                  <button type="button" class="btn btn-primary btn-sm" data-el="btn-add-players"><span data-icon="plus"></span>Add Players</button>
+                </div>
+                <ul class="pm-list" data-el="pm-list"></ul>
+              </div>
+            </details>
+          </div>
+
+          <!-- Match history (also used for printing) -->
+          <details class="panel details-panel panel-history" data-el="history-card" open>
+            <summary class="panel-head details-summary">
+              <h2 class="panel-title"><span class="panel-icon" data-icon="clock"></span>Match History</h2>
+              <span class="details-toggle"><span class="details-chevron" data-icon="chevronDown"></span></span>
+            </summary>
+            <div class="details-body">
+              <div class="history-actions no-print">
+                <button type="button" class="btn btn-secondary btn-sm" data-el="btn-export-pdf"><span data-icon="printer"></span>Export PDF</button>
+                <button type="button" class="btn btn-danger-ghost btn-sm" data-el="btn-clear-history"><span data-icon="trash"></span>Clear History</button>
+              </div>
+              <div data-el="history-list" class="history-list"></div>
+
+              <!-- List version of the history, only shown in the PDF -->
+              <table class="history-print" aria-hidden="true">
                 <thead>
                   <tr>
-                    <th>Player</th>
-                    <th>Games</th>
-                    <th>Wins</th>
-                    <th>Losses</th>
-                    <th>Win Rate</th>
+                    <th class="hp-num">#</th>
+                    <th class="hp-time">Time</th>
+                    <th class="hp-court">Court</th>
+                    <th>Team 1</th>
+                    <th>Team 2</th>
+                    <th>Winner</th>
+                    <th class="hp-score">Score</th>
                   </tr>
                 </thead>
-                <tbody id="stats-body"></tbody>
+                <tbody data-el="history-print-body"></tbody>
               </table>
             </div>
-            <div class="stats-cards" id="stats-cards"></div>
-          </div>
-        </details>
+          </details>
 
-        <!-- Player management -->
-        <details class="panel details-panel panel-players" id="players-card" open>
-          <summary class="panel-head details-summary">
-            <h2 class="panel-title"><span class="panel-icon" data-icon="userCog"></span>Player Management</h2>
-            <span class="details-toggle"><span class="badge badge-neutral" id="pm-count"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
-          </summary>
-          <div class="details-body">
-            <div class="pm-toolbar">
-              <p class="hint pm-hint" id="pm-hint"></p>
-              <button type="button" class="btn btn-primary btn-sm" id="btn-add-players"><span data-icon="plus"></span>Add Players</button>
+          <!-- Reset and clear buttons -->
+          <section class="panel panel-danger no-print">
+            <div class="danger-text">
+              <h2 class="panel-title"><span class="panel-icon" data-icon="alert"></span>Session</h2>
+              <p class="hint">Delete Session removes this session's players, courts, stats and match history. Other sessions aren't affected.</p>
             </div>
-            <ul class="pm-list" id="pm-list"></ul>
-          </div>
-        </details>
-      </div>
-
-      <!-- Match history (also the printable part) -->
-      <details class="panel details-panel panel-history" id="history-card" open>
-        <summary class="panel-head details-summary">
-          <h2 class="panel-title"><span class="panel-icon" data-icon="clock"></span>Match History</h2>
-          <span class="details-toggle"><span class="details-chevron" data-icon="chevronDown"></span></span>
-        </summary>
-        <div class="details-body">
-          <div class="history-actions no-print">
-            <button type="button" class="btn btn-secondary btn-sm" id="btn-export-pdf"><span data-icon="printer"></span>Export PDF</button>
-            <button type="button" class="btn btn-danger-ghost btn-sm" id="btn-clear-history"><span data-icon="trash"></span>Clear History</button>
-          </div>
-          <div id="history-list" class="history-list"></div>
-
-          <!-- PDF-only list view of the same history (cards are used on screen) -->
-          <table class="history-print" aria-hidden="true">
-            <thead>
-              <tr>
-                <th class="hp-num">#</th>
-                <th class="hp-time">Time</th>
-                <th class="hp-court">Court</th>
-                <th>Team 1</th>
-                <th>Team 2</th>
-                <th>Winner</th>
-                <th class="hp-score">Score</th>
-              </tr>
-            </thead>
-            <tbody id="history-print-body"></tbody>
-          </table>
+            <button type="button" class="btn btn-danger" data-el="btn-reset"><span data-icon="trash"></span>Delete Session</button>
+          </section>
         </div>
       </details>
-
-      <!-- Destructive session controls, kept apart from everyday actions -->
-      <section class="panel panel-danger no-print" aria-labelledby="session-controls-heading">
-        <div class="danger-text">
-          <h2 class="panel-title" id="session-controls-heading"><span class="panel-icon" data-icon="alert"></span>Session</h2>
-          <p class="hint">Reset Session clears all players, courts, stats and match history, then returns to setup.</p>
-        </div>
-        <button type="button" class="btn btn-danger" id="btn-reset"><span data-icon="reset"></span>Reset Session</button>
-      </section>
-
-    </section>
+    </template>
   </main>
 </div>
 
-<!-- Shared modal for player management, swaps and pairing edits -->
+<!-- Pop-up for editing players, swaps and pairings -->
 <dialog id="modal" class="modal no-print" aria-labelledby="modal-title">
   <div class="modal-card">
     <div class="modal-header">
@@ -271,18 +298,18 @@
   </div>
 </dialog>
 
-<!-- Appears after scrolling down a long page -->
+<!-- Back-to-top button -->
 <button type="button" class="to-top no-print" id="btn-to-top" aria-label="Back to top" title="Back to top" tabindex="-1"><span data-icon="arrowUp"></span></button>
 
-<!-- Short notices (e.g. "Updated with changes made in another tab") -->
+<!-- Short pop-up messages -->
 <div class="toast no-print" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/icons.js?v=56"></script>
-<script src="js/scheduler.js?v=56"></script>
-<script src="js/queue.js?v=56"></script>
-<script src="js/storage.js?v=56"></script>
-<script src="js/session.js?v=56"></script>
-<script src="js/pdf.js?v=56"></script>
-<script src="js/app.js?v=56"></script>
+<script src="js/icons.js?v=60"></script>
+<script src="js/scheduler.js?v=60"></script>
+<script src="js/queue.js?v=60"></script>
+<script src="js/storage.js?v=60"></script>
+<script src="js/session.js?v=60"></script>
+<script src="js/pdf.js?v=60"></script>
+<script src="js/app.js?v=60"></script>
 </body>
 </html>

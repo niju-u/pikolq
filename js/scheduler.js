@@ -1,6 +1,4 @@
-/**
- * scheduler.js
- */
+// scheduler.js: name formatting, setup checks and court counts.
 
 const Scheduler = (() => {
   const PLAYERS_PER_MATCH = { singles: 2, doubles: 4 };
@@ -12,33 +10,26 @@ const Scheduler = (() => {
     return PLAYERS_PER_MATCH[matchType] || 4;
   }
 
-  /**
-   * Capitalize every word: "maria christine" / "MARIA CHRISTINE" -> "Maria Christine".
-   * Parts split by hyphens/apostrophes are capitalized too ("anne-marie" ->
-   * "Anne-Marie", "o'neil" -> "O'Neil"). A word typed in deliberate mixed case
-   * keeps its inner capitals ("McDonald" stays "McDonald").
-   */
+  /** Capitalize each word: "maria christine" -> "Maria Christine", "anne-marie" -> "Anne-Marie".
+   *  Names typed like "McDonald" keep their capitals. */
   function capitalizeName(name) {
     return name.split(' ').map(word => word.split(/([-'’])/).map(part => {
       if (!part || /^[-'’]$/.test(part)) return part;
       const lower = part.toLocaleLowerCase();
       const upper = part.toLocaleUpperCase();
-      // Keep inner capitals only when the word already starts with one
-      // ("McDonald", "DeShawn"); "jAY" or "JAY" are tidied to "Jay".
+      // Keep inner capitals only if the word starts with one ("McDonald"); "jAY" becomes "Jay".
       const startsUpper = part.charAt(0) !== part.charAt(0).toLocaleLowerCase();
       const base = part === upper || !startsUpper ? lower : part;
       return base.charAt(0).toLocaleUpperCase() + base.slice(1);
     }).join('')).join(' ');
   }
 
-  /** One rule for names everywhere: trim, collapse inner whitespace, capitalize. */
+  /** Clean up a name: trim, single spaces, capitalize. */
   function normalizeName(name) {
     return capitalizeName(String(name == null ? '' : name).trim().replace(/\s+/g, ' '));
   }
 
-  /**
-   * Validate raw setup form values. Returns { valid, errors: string[] }.
-   */
+  /** Check the setup form values. Returns { valid, errors }. */
   function validateSetup({ numPlayers, numCourts, matchType, names }) {
     const errors = [];
 
@@ -79,10 +70,7 @@ const Scheduler = (() => {
     return { valid: errors.length === 0, errors };
   }
 
-  /**
-   * How many courts can actually be filled with the given player count,
-   * and how many sit waiting the moment the session starts.
-   */
+  /** How many courts can be filled, and how many players wait at the start. */
   function computeCourtSetup({ numPlayers, numCourts, matchType }) {
     const perMatch = playersPerMatch(matchType);
     const maxSimultaneousMatches = Math.floor(numPlayers / perMatch);

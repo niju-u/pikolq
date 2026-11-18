@@ -1,10 +1,7 @@
 /**
- * icons.js
- * Small inline SVG icon set (stroke icons, 24x24 grid) so the UI has
- * consistent icons without an icon font or network request.
- *
- *   Icons.svg('trophy')            -> '<svg ...>...</svg>'
- *   <span data-icon="trophy"></span> + Icons.hydrate(root)  (static markup)
+ * icons.js: a small set of SVG icons.
+ *   Icons.svg('trophy') returns the SVG markup.
+ *   Icons.hydrate(root) fills every <span data-icon="trophy"></span> inside root.
  */
 
 const Icons = (() => {
@@ -44,7 +41,7 @@ const Icons = (() => {
     return `<svg class="icon${cls ? ` ${cls}` : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
   }
 
-  /** Fill every <span data-icon="name"> inside root with its SVG (once). */
+  /** Put the matching SVG into every <span data-icon="..."> inside root. */
   function hydrate(root = document) {
     root.querySelectorAll('[data-icon]:not([data-icon-ready])').forEach(node => {
       node.insertAdjacentHTML('afterbegin', svg(node.dataset.icon));

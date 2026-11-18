@@ -1,15 +1,11 @@
 /**
- * session.js
- * DOM-free organizer operations on the live session state:
- * player edits, fixed partners, removal, manual swaps / pairings and the
- * temporary manual waiting order.
+ * session.js: organizer actions during a session. Editing players, fixed
+ * partners, removing players, swaps, pairings and the manual waiting order.
  *
- * Three distinct concepts:
- *  - Fixed partner: a standing partnership the automatic matchmaking respects.
- *  - Manual pairing: a one-off rearrangement of the players on one court.
- *  - Manual swap: exchanging a court player with another court's player or a
- *    waiting player.
- * None of these record a game, touch stats or create history entries.
+ *  - Fixed partner: two players who always play together.
+ *  - Manual pairing: rearranging the players on one court, once.
+ *  - Manual swap: swapping a court player with another court's player or a waiting player.
+ * None of these count as a game or change stats or history.
  */
 
 const Session = (() => {
@@ -32,7 +28,7 @@ const Session = (() => {
     return ids;
   }
 
-  /** Where a player is on court: { courtId, team, index } or null if not playing. */
+  /** Where a player is on court ({ courtId, team, index }), or null. */
   function locate(state, id) {
     for (const court of state.courts) {
       const m = court.activeMatch;
@@ -49,7 +45,7 @@ const Session = (() => {
     return Queue.getWaitingOrder(state.players, busyIds(state), state.matchSeq, state.waitOverride);
   }
 
-  /** `byId` is optional; pass a prebuilt Map when calling in a loop. */
+  /** `byId` is optional: pass a Map to speed up loops. */
   function partnerOf(state, p, byId = new Map(state.players.map(pl => [pl.id, pl]))) {
     const id = Queue.activePartnerId(p, byId, state.config.matchType);
     return id == null ? null : byId.get(id);
@@ -57,7 +53,7 @@ const Session = (() => {
 
   // ---------- manual waiting order ----------
 
-  /** Drop ids that are no longer waiting; clear the override once it is used up. */
+  /** Remove ids that are no longer waiting; clear the order once it's empty. */
   function pruneOverride(state) {
     if (!Array.isArray(state.waitOverride)) {
       state.waitOverride = null;
@@ -71,7 +67,7 @@ const Session = (() => {
     state.waitOverride = kept.length ? kept : null;
   }
 
-  /** `baseOrder` (optional): the order the organizer sees, which the move applies to. */
+  /** `baseOrder` (optional): the order shown on screen. */
   function moveWaiting(state, id, delta, baseOrder) {
     const order = Array.isArray(baseOrder) && baseOrder.length ? baseOrder.slice() : waitingOrder(state).map(p => p.id);
     const i = order.indexOf(id);
@@ -92,8 +88,7 @@ const Session = (() => {
     const name = Scheduler.normalizeName(raw);
     if (!name) return { error: 'Name cannot be empty.' };
     const current = playerById(state, id);
-    // An unchanged name is always allowed (e.g. a long name saved before the
-    // length limit existed must not block editing the partner).
+    // An unchanged name is always allowed (old names may be longer than today's limit).
     if (current && name === Scheduler.normalizeName(current.name)) return { name: current.name };
     if (name.length > MAX_NAME_LENGTH) return { error: `Name must be ${MAX_NAME_LENGTH} characters or fewer.` };
     const key = name.toLowerCase();
@@ -125,10 +120,8 @@ const Session = (() => {
     p.fixedPartnerId = null;
   }
 
-  /**
-   * Rename and/or set the fixed partner (partnerId: id, null to remove,
-   * undefined to leave unchanged). Validates everything before changing anything.
-   */
+  /** Rename and/or set the fixed partner (id, null to remove, undefined to keep).
+   *  Checks everything before changing anything. */
   function updatePlayer(state, id, { name, partnerId }) {
     const p = playerById(state, id);
     if (!p || !Queue.isActive(p)) return { ok: false, errors: ['Player not found in this session.'] };
@@ -152,11 +145,8 @@ const Session = (() => {
     return { ok: true };
   }
 
-  /**
-   * Remove a player from the session. They stay on record (marked as left,
-   * with the time), keeping their stats and match history, and can be
-   * restored later. Returns { ok } or { ok: false, error }.
-   */
+  /** Remove a player. They stay on record as "left" with their stats and can be restored.
+   *  Returns { ok } or { ok: false, error }. */
   function removePlayer(state, id) {
     const p = playerById(state, id);
     if (!p || !Queue.isActive(p)) return { ok: false, error: 'Player not found in this session.' };
@@ -168,8 +158,7 @@ const Session = (() => {
       };
     }
     clearPartner(state, p);
-    // Always kept on record (marked as left), so the session shows everyone
-    // who took part. Restore brings them back with their stats.
+    // Kept on record as "left" so the session shows everyone who played.
     p.active = false;
     p.leftAt = timeLabelNow();
     pruneOverride(state);
@@ -182,13 +171,8 @@ const Session = (() => {
 
   // ---------- adding / restoring players mid-session ----------
 
-  /**
-   * Where a newcomer (or returning player) joins the rotation: their HIDDEN
-   * rotation count is set level with the active player who has played least
-   * (e.g. everyone has 1 game -> they count as 1), and they queue behind
-   * everyone already waiting at that level. The visible stats are untouched,
-   * so a new player still shows their real 0 games.
-   */
+  /** Put a new or returning player into the rotation level with whoever has played least,
+   *  at the back of that group. Their visible stats don't change. */
   function joinRotation(state, p) {
     const others = state.players.filter(o => Queue.isActive(o) && o.id !== p.id);
     const baseline = others.length ? Math.min(...others.map(Queue.rotationGames)) : 0;
@@ -215,19 +199,15 @@ const Session = (() => {
     return state.players.filter(Queue.isActive).length;
   }
 
-  /**
-   * Add one or more players by name (validated as a batch before anything
-   * changes). A name matching a removed player restores that player, keeping
-   * their stats and history. Returns { ok, added: [names], restored: [names] }
-   * or { ok: false, errors }.
-   */
+  /** Add players by name (all checked first). A removed player's name brings them back.
+   *  Returns { ok, added, restored } or { ok: false, errors }. */
   function addPlayers(state, rawNames) {
     const names = rawNames.map(Scheduler.normalizeName).filter(Boolean);
     const errors = [];
     if (!names.length) return { ok: false, errors: ['Enter at least one name.'] };
 
     const seen = new Set();
-    const plan = []; // { name, restore: player|null }
+    const plan = []; // { name, restore: player or null }
     names.forEach(name => {
       const key = name.toLowerCase();
       if (name.length > Scheduler.MAX_NAME_LENGTH) {
@@ -277,7 +257,7 @@ const Session = (() => {
     return { team1: m.team1.slice(), team2: m.team2.slice() };
   }
 
-  /** Map of playerId -> "courtId:team" with `assignments` (Map courtId -> teams) applied. */
+  /** Map of playerId -> "courtId:team" after applying `assignments`. */
   function teamKeyMap(state, assignments) {
     const map = new Map();
     state.courts.forEach(c => {
@@ -295,11 +275,7 @@ const Session = (() => {
     return 'off-court';
   }
 
-  /**
-   * Fixed pairs this change would separate: pairs that were team-mates and no
-   * longer are, or that would newly end up on courts on different teams.
-   * Returns [[playerA, playerB], ...].
-   */
+  /** Fixed pairs this change would split up. Returns [[playerA, playerB], ...]. */
   function fixedPairsSplitBy(state, assignments) {
     if (state.config.matchType !== 'doubles') return [];
     const before = teamKeyMap(state, null);
@@ -318,7 +294,7 @@ const Session = (() => {
     return splits;
   }
 
-  /** Every court keeps its size, and no player appears twice or is inactive. */
+  /** Each court keeps its size, and no player is used twice or is inactive. */
   function validateAssignments(state, assignments) {
     const perTeam = Scheduler.playersPerMatch(state.config.matchType) / 2;
     for (const [courtId, teams] of assignments) {
@@ -342,10 +318,7 @@ const Session = (() => {
     return null;
   }
 
-  /**
-   * Plan a swap of two players. At least one must be on a court; the other may
-   * be on a different court or waiting. Returns { assignments } or { error }.
-   */
+  /** Plan a swap of two players (at least one on a court). Returns { assignments } or { error }. */
   function planSwap(state, idA, idB) {
     if (idA == null || idB == null) return { error: 'Choose two players to swap.' };
     if (idA === idB) return { error: 'Choose two different players.' };
@@ -393,11 +366,8 @@ const Session = (() => {
     return TEAMS.every(t => a[t].length === b[t].length && a[t].every((id, i) => id === b[t][i]));
   }
 
-  /**
-   * Apply planned court changes. Clears any selected winner / typed score on
-   * changed courts (the line-up changed) and marks them as manually adjusted.
-   * Returns the ids of courts that actually changed.
-   */
+  /** Apply court changes. Clears the winner/score on changed courts and marks them as manual.
+   *  Returns the changed court ids. */
   function applyAssignments(state, assignments) {
     const error = validateAssignments(state, assignments);
     if (error) throw new Error(error);

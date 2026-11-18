@@ -1,15 +1,7 @@
 /**
- * pdf.js
- * Builds the "Pickleball Match History" PDF directly in the browser with
- * jsPDF + jsPDF-AutoTable, instead of printing the web page.
- *
- * Why: browser printing (especially on phones) adds its own header/footer with
- * the page address and date, positions fixed elements relative to the phone
- * screen, and handles multi-column layouts inconsistently. A generated PDF looks
- * the same on every device.
- *
- * The libraries are loaded from cdnjs only when Export is pressed. If they
- * can't load (e.g. offline), the caller falls back to window.print().
+ * pdf.js: builds the match history PDF with jsPDF.
+ * It looks the same on every device and has no browser header/footer.
+ * The library only loads when Export is pressed. If it fails, the app prints instead.
  */
 
 const PdfExport = (() => {
@@ -48,7 +40,7 @@ const PdfExport = (() => {
     return loading;
   }
 
-  /** Load a same-origin image and convert it to PNG (jsPDF can't embed WebP). */
+  /** Load an image and convert it to PNG (jsPDF can't use WebP). */
   function loadImageAsPng(url, maxSide) {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -73,11 +65,11 @@ const PdfExport = (() => {
 
   /**
    * data = {
-   *   dateLabel, courts, matchType, players: [names],
-   *   history: [{ number, time, court, team1, team2, winner: 'team1'|'team2', score|null, manual }],  // newest first
+   *   sessionName, dateLabel, courts, matchType, players,
+   *   history: [{ number, time, court, team1, team2, winner, score, manual }],  // newest first
    *   sponsorUrl, logoUrl, watermarkUrl
    * }
-   * options.save (default true): download the file; otherwise just return the jsPDF doc.
+   * options.save (default true): download the file. If false, just return the doc.
    */
   async function generate(data, options = {}) {
     await loadLibs();
@@ -92,9 +84,12 @@ const PdfExport = (() => {
     const H = doc.internal.pageSize.getHeight();
     const M = 15;
 
-    doc.setProperties({ title: `Pickleball Match History - ${data.dateLabel}`, subject: 'Pickleball open play results', creator: 'Pickleball Open Play' });
+    // Session name with characters that aren't allowed in file names removed
+    const safeName = (data.sessionName || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const docTitle = ['Pickleball Match History', safeName, data.dateLabel].filter(Boolean).join(' - ');
+    doc.setProperties({ title: docTitle, subject: 'Pickleball open play results', creator: 'Pickleball Open Play' });
 
-    // ---- faint sponsor badge, centred on every page, drawn first so it sits behind ----
+    // ---- faint sponsor badge behind every page (drawn first) ----
     const pagesWithWatermark = new Set();
     function drawWatermark() {
       const page = doc.internal.getCurrentPageInfo().pageNumber;
@@ -118,7 +113,8 @@ const PdfExport = (() => {
     doc.setFontSize(9);
     doc.setTextColor(...MUTED);
     const courtsLabel = `${data.courts} court${data.courts === 1 ? '' : 's'}`;
-    doc.text(`${data.dateLabel}  ·  ${courtsLabel}  ·  ${data.matchType}`, M, M + 13);
+    const subtitle = [data.sessionName, data.dateLabel, courtsLabel, data.matchType].filter(Boolean);
+    doc.text(subtitle.join('  ·  '), M, M + 13);
 
     const logoH = 15;
     const logoW = logoH * (logo.w / logo.h);
@@ -139,8 +135,8 @@ const PdfExport = (() => {
     doc.line(M, y, W - M, y);
     y += 8;
 
-    // ---- players: numbered, column count grows with the number of players ----
-    // players: [{ name, note, left }] (plain strings are accepted too)
+    // ---- players: numbered, more columns for more players ----
+    // players: [{ name, note, left }] or plain names
     const roster = data.players.map(p => (typeof p === 'string' ? { name: p, note: '', left: false } : p));
     const n = roster.length;
     const leftCount = roster.filter(p => p.left).length;
@@ -262,11 +258,11 @@ const PdfExport = (() => {
     });
 
     if (options.save !== false) {
-      const fileName = `Pickleball Match History - ${data.dateLabel}.pdf`;
+      const fileName = `${docTitle}.pdf`;
       try {
         doc.save(fileName);
       } catch (err) {
-        // Some in-app browsers block downloads: show the PDF instead
+        // Some in-app browsers block downloads, so show the PDF instead
         window.open(doc.output('bloburl'), '_blank');
       }
     }
