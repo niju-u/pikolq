@@ -264,6 +264,7 @@ const App = (() => {
       // Sessions saved before the rest rule: assume their last activity was their last game
       if (!Number.isInteger(p.lastPlayedSeq)) p.lastPlayedSeq = p.gamesPlayed > 0 ? p.lastActiveSeq : null;
       p.streak = int(p.streak);
+      if (!Number.isInteger(p.holdUntilSeq)) delete p.holdUntilSeq;
       if (!Number.isInteger(p.lastCourtId)) p.lastCourtId = null;
       p.teammates = obj(p.teammates);
       p.name = Scheduler.normalizeName(p.name) || p.name; // capitalize names from old saves
@@ -1001,7 +1002,7 @@ const App = (() => {
             <textarea id="m-new-names" rows="4" autocomplete="off" placeholder="e.g. Kiara&#10;Simba"></textarea>
           </label>
           <div class="preview-box" id="m-add-preview" aria-live="polite"></div>
-          <p class="hint">New players join the rotation level with whoever has played least, behind the people already waiting, so they don’t jump the queue. Their stats start at 0.${doubles ? ' You can set a fixed partner from their ⋮ menu afterwards.' : ''} Typing the name of a removed player restores them with their stats.</p>
+          <p class="hint">New players join the rotation level with whoever has played least. They play after the current “Next to play” group, so they don’t jump the queue. Their stats start at 0.${doubles ? ' You can set a fixed partner from their ⋮ menu afterwards.' : ''} Typing the name of a removed player restores them with their stats.</p>
         </div>`,
       onChange: () => {
         hideModalError();
