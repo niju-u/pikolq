@@ -261,6 +261,9 @@ const App = (() => {
       ['gamesPlayed', 'wins', 'losses', 'lastActiveSeq', 'pointsScored', 'pointsAgainst', 'scoredGames']
         .forEach(k => { p[k] = int(p[k]); });
       p.queueGames = int(p.queueGames, p.gamesPlayed);
+      // Sessions saved before the rest rule: assume their last activity was their last game
+      if (!Number.isInteger(p.lastPlayedSeq)) p.lastPlayedSeq = p.gamesPlayed > 0 ? p.lastActiveSeq : null;
+      p.streak = int(p.streak);
       if (!Number.isInteger(p.lastCourtId)) p.lastCourtId = null;
       p.teammates = obj(p.teammates);
       p.name = Scheduler.normalizeName(p.name) || p.name; // capitalize names from old saves
@@ -688,6 +691,7 @@ const App = (() => {
     court.idleReason = null;
     court.activeMatch = {
       matchId: state.nextMatchId++,
+      startSeq: state.matchSeq, // used to spot players going straight from one game to the next
       team1: plan.team1,
       team2: plan.team2,
       winner: null,
@@ -807,7 +811,7 @@ const App = (() => {
 
     Queue.commitMatch(
       state.players,
-      { courtId: court.id, team1: m.team1, team2: m.team2, winner: m.winner, team1Score, team2Score },
+      { courtId: court.id, team1: m.team1, team2: m.team2, winner: m.winner, team1Score, team2Score, startSeq: m.startSeq },
       currentSeq
     );
 
@@ -1613,7 +1617,7 @@ const App = (() => {
     const finishing = live.reduce((a, b) => (b.activeMatch.matchId < a.activeMatch.matchId ? b : a)).activeMatch;
     const players = JSON.parse(JSON.stringify(state.players));
     const seq = state.matchSeq + 1;
-    Queue.commitMatch(players, { courtId: 0, team1: finishing.team1, team2: finishing.team2, winner: 'team1', team1Score: null, team2Score: null }, seq);
+    Queue.commitMatch(players, { courtId: 0, team1: finishing.team1, team2: finishing.team2, winner: 'team1', team1Score: null, team2Score: null, startSeq: finishing.startSeq }, seq);
     const stillBusy = new Set([...busyIds].filter(id => !finishing.team1.includes(id) && !finishing.team2.includes(id)));
     const ids = Queue.nextUpIds(players, stillBusy, matchType, seq, state.waitOverride, state.nextMatchId);
     // Only highlight players who are waiting right now
@@ -1638,7 +1642,7 @@ const App = (() => {
     el.queueMode.className = `queue-mode${state.waitOverride ? ' is-manual' : ''}`;
     el.queueMode.html = state.waitOverride
       ? `${Icons.svg('hand')}<span><strong>Manual order (temporary).</strong> Players tagged “Manual” go first, in this order, until they are called to a court. Anyone finishing a match rejoins after them in automatic order. Fixed pairs are still called together.</span>`
-      : `${Icons.svg('clock')}<span>Automatic order: fewest games first, then longest wait. Use the arrows to override temporarily.</span>`;
+      : `${Icons.svg('clock')}<span>Automatic order: fewest games first, then longest wait. Nobody plays two games in a row. Use the arrows to override temporarily.</span>`;
 
     if (!waiting.length) {
       el.waitingList.html = '<p class="empty-note">Everyone is currently playing.</p>';
