@@ -160,13 +160,37 @@ const Session = (() => {
     clearPartner(state, p);
     // Kept on record as "left" so the session shows everyone who played.
     p.active = false;
-    p.leftAt = timeLabelNow();
+    p.leftAt = recordTime(p, 'left');
     pruneOverride(state);
     return { ok: true };
   }
 
-  function timeLabelNow() {
-    return new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  function timeLabelNow(date = new Date()) {
+    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  /** Remember when a player left or came back ('left' | 'rejoined'), so every time is kept. Returns the time. */
+  function recordTime(p, event) {
+    const at = timeLabelNow();
+    if (!Array.isArray(p.log)) p.log = [];
+    p.log.push({ e: event, at });
+    return at;
+  }
+
+  /** When a player started, joined, left and came back, in order: [{ label, at }]. */
+  function playerTimeline(state, p) {
+    const items = [];
+    if (p.joinedAt) items.push({ label: 'Joined', at: p.joinedAt });
+    else if (state.startedAt) items.push({ label: 'Started', at: state.startedAt });
+    if (Array.isArray(p.log) && p.log.length) {
+      p.log.forEach(ev => items.push({ label: ev.e === 'left' ? 'Left' : 'Rejoined', at: ev.at }));
+    } else {
+      // Saved before every time was kept: only the latest left/rejoined times are known
+      const left = p.leftAt ? { label: 'Left', at: p.leftAt } : null;
+      const back = p.rejoinedAt ? { label: 'Rejoined', at: p.rejoinedAt } : null;
+      (Queue.isActive(p) ? [left, back] : [back, left]).forEach(x => { if (x) items.push(x); });
+    }
+    return items;
   }
 
   // ---------- adding / restoring players mid-session ----------
@@ -192,7 +216,7 @@ const Session = (() => {
       && Scheduler.normalizeName(o.name).toLowerCase() === Scheduler.normalizeName(p.name).toLowerCase());
     if (clash) return { ok: false, error: `Another active player is already named "${clash.name}". Rename them first.` };
     p.active = true;
-    p.rejoinedAt = timeLabelNow();
+    p.rejoinedAt = recordTime(p, 'rejoined');
     joinRotation(state, p);
     return { ok: true };
   }
@@ -239,7 +263,7 @@ const Session = (() => {
     plan.forEach(({ name, restore }) => {
       if (restore) {
         restore.active = true;
-        restore.rejoinedAt = timeLabelNow();
+        restore.rejoinedAt = recordTime(restore, 'rejoined');
         joinRotation(state, restore);
         restored.push(restore.name);
       } else {
@@ -401,6 +425,8 @@ const Session = (() => {
     resetWaitingOrder,
     updatePlayer,
     removePlayer,
+    timeLabelNow,
+    playerTimeline,
     addPlayers,
     restorePlayer,
     fixedPairsSplitBy,

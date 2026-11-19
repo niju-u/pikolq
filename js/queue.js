@@ -9,6 +9,7 @@
  *     at least one match, unless there aren't enough rested players to fill the court.
  *     Exception: if the rested players are exactly the group that last played together,
  *     one of them is swapped with a player who just finished (max 2 games in a row).
+ *     The "strictRest" option turns this exception off.
  *
  * Also:
  *  - Removed players are never picked.
@@ -378,8 +379,9 @@ const Queue = (() => {
   }
 
   /** The match the next free court would get. Used by generateMatch and "Next to play". */
-  function planNext(players, busyIds, matchType, currentSeq, manualOrder, seed) {
+  function planNext(players, busyIds, matchType, currentSeq, manualOrder, seed, options = {}) {
     const perMatch = matchType === 'doubles' ? 4 : 2;
+    const strictRest = !!options.strictRest;
     const byId = new Map(players.map(p => [p.id, p]));
     const fullOrder = getWaitingOrder(players, busyIds, currentSeq, manualOrder);
     // Rest rule: players who just finished go to the back and are only used if needed.
@@ -405,7 +407,8 @@ const Queue = (() => {
         return result({ team1: split.team1, team2: split.team2 });
       }
     } else {
-      if (!hasManualOrder(manualOrder) && rested.length === perMatch && fullOrder.length > perMatch) {
+      // Strict rest skips this swap, so nobody goes straight back on (the same group may repeat instead)
+      if (!strictRest && !hasManualOrder(manualOrder) && rested.length === perMatch && fullOrder.length > perMatch) {
         const plan = mixLockedGroup(players, rested, fullOrder, perMatch, matchType, busyIds, currentSeq, rng);
         if (plan) return result(plan);
       }
@@ -422,15 +425,15 @@ const Queue = (() => {
   }
 
   /** Ids of the players first in line for the next free court. */
-  function nextUpIds(players, busyIds, matchType, currentSeq, manualOrder, seed) {
-    const { plan, waitingOrder, byId, perMatch } = planNext(players, busyIds, matchType, currentSeq, manualOrder, seed);
+  function nextUpIds(players, busyIds, matchType, currentSeq, manualOrder, seed, options) {
+    const { plan, waitingOrder, byId, perMatch } = planNext(players, busyIds, matchType, currentSeq, manualOrder, seed, options);
     if (plan) return new Set(plan.team1.concat(plan.team2).map(p => p.id));
     const partial = selectPlayers(waitingOrder, perMatch, matchType, byId, true);
     return new Set(partial.map(p => p.id));
   }
 
-  function generateMatch(players, busyIds, matchType, currentSeq, manualOrder, seed) {
-    const { plan } = planNext(players, busyIds, matchType, currentSeq, manualOrder, seed);
+  function generateMatch(players, busyIds, matchType, currentSeq, manualOrder, seed, options) {
+    const { plan } = planNext(players, busyIds, matchType, currentSeq, manualOrder, seed, options);
     if (!plan) return null;
     return {
       team1: plan.team1.map(p => p.id),
