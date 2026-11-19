@@ -33,7 +33,22 @@ const Storage = (() => {
 
   function listSessions() {
     const list = parse(safe(() => localStorage.getItem(LIST_KEY), null, 'load the session list'));
-    return Array.isArray(list) ? list.filter(s => s && typeof s.id === 'string') : [];
+    return Array.isArray(list) ? list.filter(s => s && typeof s.id === 'string') : rebuildList();
+  }
+
+  /** The list is missing or damaged: find the saved sessions by their keys so they aren't lost. */
+  function rebuildList() {
+    const found = [];
+    safe(() => {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith(SESSION_PREFIX)) continue;
+        const saved = parse(localStorage.getItem(key));
+        found.push({ id: key.slice(SESSION_PREFIX.length), name: (saved && typeof saved.name === 'string') ? saved.name : '', createdAt: Date.now() });
+      }
+    }, undefined);
+    if (found.length) writeList(found);
+    return found;
   }
 
   function writeList(list) {
@@ -61,13 +76,15 @@ const Storage = (() => {
 
   // ---------- one session ----------
 
-  /** Save a session. Adds it to the list if it's new, and keeps its name in sync. */
+  /** Save a session. Adds it to the list if it's new, and keeps its name in sync.
+   *  Returns false if the browser refused to save (storage full or blocked). */
   function saveSession(id, state) {
-    safe(() => localStorage.setItem(SESSION_PREFIX + id, JSON.stringify(state)), undefined, 'save the session');
+    const saved = safe(() => { localStorage.setItem(SESSION_PREFIX + id, JSON.stringify(state)); return true; }, false, 'save the session');
     const list = listSessions();
     const entry = list.find(s => s.id === id);
     if (!entry) writeList([...list, { id, name: state.name || '', createdAt: Date.now() }]);
     else if (entry.name !== state.name) { entry.name = state.name || ''; writeList(list); }
+    return saved;
   }
 
   function loadSession(id) {
@@ -79,6 +96,7 @@ const Storage = (() => {
     safe(() => localStorage.removeItem(SESSION_PREFIX + id), undefined, 'delete the session');
     writeList(listSessions().filter(s => s.id !== id));
     safe(() => localStorage.removeItem(`pbq_pref_open_${id}`), undefined);
+    safe(() => localStorage.removeItem(`pbq_pref_voice_${id}`), undefined);
   }
 
   // ---------- setup draft ----------
