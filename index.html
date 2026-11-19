@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#F3EDF7" />
 <title>Pickleball Open Play</title>
 <link rel="icon" href="img/icons/favicon.ico" sizes="48x48" />
@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
-<link rel="stylesheet" href="css/style.css?v=72" />
+<link rel="stylesheet" href="css/style.css?v=82" />
 </head>
 <body>
 <header class="app-header no-print">
@@ -148,6 +148,7 @@
           <span class="session-head-chevron" data-icon="chevronDown"></span>
           <div class="session-head-main">
             <h2 class="session-head-name" data-el="head-name"></h2>
+            <p class="session-head-started" data-el="head-started" hidden></p>
             <p class="session-head-status" data-el="head-status"></p>
           </div>
           <div class="summary-chips session-head-chips" data-el="session-meta"></div>
@@ -201,6 +202,29 @@
                 </div>
               </div>
               <p class="queue-mode" data-el="queue-mode"></p>
+
+              <!-- Strict rest: on = nobody goes straight back on court -->
+              <div class="rest-setting">
+                <label class="switch-row">
+                  <input type="checkbox" class="switch-input" data-el="strict-rest" />
+                  <span class="switch" aria-hidden="true"></span>
+                  <span class="switch-text">
+                    <strong>No back-to-back games</strong>
+                    <small>Strict rest: players who just finished always sit out before playing again.</small>
+                  </span>
+                </label>
+                <details class="rest-help">
+                  <summary>What does this mean?</summary>
+                  <div class="rest-help-body">
+                    <p>This decides whether someone can be put straight back on court right after finishing a game.</p>
+                    <ul>
+                      <li><strong>Off (the default):</strong> the app mixes things up so the same four people don’t keep playing together. To do that, it may now and then put one player who just finished back on court. They get no break that time, but never more than 2 games in a row.</li>
+                      <li><strong>On:</strong> anyone who just finished always sits out first, so everyone gets a break. The catch: the same group of four may keep playing together, so you’ll meet fewer different partners and opponents.</li>
+                    </ul>
+                    <p>This only makes a difference when exactly one court’s worth of players is waiting (for example, 12 players on 2 courts). If fewer are waiting (for example, 9 players on 2 courts), someone has to go straight back on either way. If plenty are waiting, nobody plays twice in a row and this setting changes nothing.</p>
+                  </div>
+                </details>
+              </div>
               <div class="queue" data-el="waiting-list"></div>
             </section>
 
@@ -211,6 +235,9 @@
                 <span class="details-toggle"><span class="details-toggle-text"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
               </summary>
               <div class="details-body">
+                <div class="stats-actions no-print">
+                  <button type="button" class="btn btn-secondary btn-sm" data-el="btn-export-stats-pdf"><span data-icon="printer"></span>Export PDF</button>
+                </div>
                 <div class="table-wrap">
                   <table class="stats-table" data-el="stats-table">
                     <thead>
@@ -312,12 +339,12 @@
 <!-- Short pop-up messages -->
 <div class="toast no-print" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/icons.js?v=72"></script>
-<script src="js/scheduler.js?v=72"></script>
-<script src="js/queue.js?v=72"></script>
-<script src="js/storage.js?v=72"></script>
-<script src="js/session.js?v=72"></script>
-<script src="js/pdf.js?v=72"></script>
-<script src="js/app.js?v=72"></script>
+<script src="js/icons.js?v=82"></script>
+<script src="js/scheduler.js?v=82"></script>
+<script src="js/queue.js?v=82"></script>
+<script src="js/storage.js?v=82"></script>
+<script src="js/session.js?v=82"></script>
+<script src="js/pdf.js?v=82"></script>
+<script src="js/app.js?v=82"></script>
 </body>
 </html>

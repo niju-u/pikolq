@@ -9,6 +9,8 @@ const App = (() => {
       version: SESSION_VERSION,
       phase: 'session',
       name: '', // shown in the session header and PDF
+      startedMs: 0, // exact moment the session started (date and time shown in the session header)
+      startedAt: '', // clock time the session started (shown next to the original players)
       config: null, // { numPlayers, numCourts, matchType, perMatch, activeCourts, idleCourts }
       players: [],
       courts: [],
@@ -16,6 +18,7 @@ const App = (() => {
       matchSeq: 0,
       nextMatchId: 1,
       waitOverride: null, // manual waiting order (player ids), or null
+      strictRest: false, // true: nobody goes straight back on court (the same group may repeat)
     };
   }
 
@@ -42,6 +45,7 @@ const App = (() => {
 
   let modal = null; // set while the pop-up is open
   const MAX_SESSION_NAME = 40;
+  const HISTORY_PAGE = 50; // matches drawn in the history list at first
 
   // Voice announcements use the browser's built-in speech (no libraries). null if unsupported.
   const speech = ('speechSynthesis' in window && 'SpeechSynthesisUtterance' in window) ? window.speechSynthesis : null;
@@ -57,7 +61,14 @@ const App = (() => {
     renderVoiceButton();
 
     Storage.migrateLegacy();
-    Storage.listSessions().forEach(entry => openSavedSession(entry.id));
+    // Open each session on its own, so one that fails can't hide the others (its saved data is left alone)
+    Storage.listSessions().forEach(entry => {
+      try {
+        openSavedSession(entry.id);
+      } catch (err) {
+        console.error('Could not open a saved session.', err);
+      }
+    });
 
     const savedDraft = Storage.loadDraft();
     if (savedDraft) draft = Object.assign(draft, savedDraft);
@@ -77,6 +88,14 @@ const App = (() => {
       return null;
     }
     const ctx = addSessionToPage(id, migrateSession(saved));
+    // Saved before start times were kept: use the time the session was created
+    if (!state.startedMs) {
+      const entry = Storage.listSessions().find(s => s.id === id);
+      if (entry && Number.isFinite(entry.createdAt) && entry.createdAt > 0) {
+        state.startedMs = entry.createdAt;
+        if (!state.startedAt) state.startedAt = Session.timeLabelNow(new Date(entry.createdAt));
+      }
+    }
     // Refill courts cleared during repair, then save the fixed session.
     fillIdleCourts();
     persist();
@@ -123,6 +142,7 @@ const App = (() => {
     const get = name => root.querySelector(`[data-el="${name}"]`);
     Object.assign(ctx.el, {
       headName: get('head-name'),
+      headStarted: get('head-started'),
       headStatus: get('head-status'),
       headPlaying: get('head-playing'),
       sessionMeta: get('session-meta'),
@@ -134,6 +154,7 @@ const App = (() => {
       waitingList: get('waiting-list'),
       queueMode: get('queue-mode'),
       btnResetOrder: get('btn-reset-order'),
+      strictRest: get('strict-rest'),
       btnAnnounce: get('btn-announce'),
       btnAnnouncePlaying: get('btn-announce-playing'),
       btnVoiceSettings: get('btn-voice-settings'),
@@ -148,6 +169,7 @@ const App = (() => {
       pmList: get('pm-list'),
       btnAddPlayers: get('btn-add-players'),
       btnExportPdf: get('btn-export-pdf'),
+      btnExportStatsPdf: get('btn-export-stats-pdf'),
       btnClearHistory: get('btn-clear-history'),
       btnReset: get('btn-reset'),
     });
@@ -204,6 +226,14 @@ const App = (() => {
     on(ctx, e.courtsGrid, 'click', onCourtsGridClick);
     on(ctx, e.courtsGrid, 'input', onCourtsGridInput);
     on(ctx, e.waitingList, 'click', onWaitingListClick);
+    on(ctx, e.strictRest, 'change', () => {
+      state.strictRest = e.strictRest.checked;
+      persist();
+      renderSession();
+      showToast(state.strictRest
+        ? 'Strict rest is on. Nobody plays twice in a row unless there aren’t enough players to rest.'
+        : 'Strict rest is off. Groups are mixed up more, so someone may play two in a row now and then.');
+    });
     on(ctx, e.btnResetOrder, 'click', () => {
       Session.resetWaitingOrder(state);
       commitChange();
@@ -222,7 +252,13 @@ const App = (() => {
       else if (btn.dataset.action === 'restore-player') onRestorePlayer(id);
     });
     on(ctx, e.btnAddPlayers, 'click', openAddPlayersModal);
+    on(ctx, e.historyList, 'click', ev => {
+      if (!ev.target.closest('[data-action="more-history"]')) return;
+      active.historyLimit = (active.historyLimit || HISTORY_PAGE) + 100;
+      renderHistory();
+    });
     on(ctx, e.btnExportPdf, 'click', exportPdf);
+    on(ctx, e.btnExportStatsPdf, 'click', exportStatsPdf);
     on(ctx, e.btnClearHistory, 'click', onClearHistory);
     on(ctx, e.btnReset, 'click', onResetSession);
   }
@@ -284,6 +320,8 @@ const App = (() => {
       p.teammates = obj(p.teammates);
       p.name = Scheduler.normalizeName(p.name) || p.name; // capitalize names from old saves
       ['joinedAt', 'leftAt', 'rejoinedAt'].forEach(k => { if (typeof p[k] !== 'string') delete p[k]; });
+      if (Array.isArray(p.log)) p.log = p.log.filter(x => x && (x.e === 'left' || x.e === 'rejoined') && typeof x.at === 'string');
+      else delete p.log;
       p.opponents = obj(p.opponents);
     });
 
@@ -340,6 +378,9 @@ const App = (() => {
       if (p.fixedPartnerId != null && (!q || q.fixedPartnerId !== p.id)) p.fixedPartnerId = null;
     });
     if (!Array.isArray(s.waitOverride) || !s.waitOverride.every(Number.isInteger)) s.waitOverride = null;
+    s.strictRest = s.strictRest === true;
+    s.startedAt = typeof s.startedAt === 'string' ? s.startedAt : '';
+    s.startedMs = Number.isFinite(s.startedMs) && s.startedMs > 0 ? s.startedMs : 0;
     s.name = typeof s.name === 'string' && s.name.trim() ? s.name.trim().slice(0, MAX_SESSION_NAME) : 'Session';
     s.version = SESSION_VERSION;
     return s;
@@ -485,6 +526,30 @@ const App = (() => {
       if (e.target === el.modal && pressStartedOnBackdrop) closeModal();
       pressStartedOnBackdrop = false;
     });
+
+    // On phones and tablets (where pull-to-reload is turned off), tapping the logo reloads the page.
+    // Everything is saved as you go, so nothing is lost.
+    const brand = el.header.querySelector('.brand');
+    const touchScreen = window.matchMedia('(pointer: coarse), (max-width: 767px)');
+    const syncBrand = () => {
+      brand.toggleAttribute('data-reload', touchScreen.matches);
+      if (touchScreen.matches) {
+        brand.setAttribute('role', 'button');
+        brand.setAttribute('tabindex', '0');
+        brand.setAttribute('aria-label', 'Reload the page');
+      } else {
+        ['role', 'tabindex', 'aria-label'].forEach(a => brand.removeAttribute(a));
+      }
+    };
+    syncBrand();
+    touchScreen.addEventListener('change', syncBrand);
+    brand.addEventListener('click', () => { if (touchScreen.matches) window.location.reload(); });
+    brand.addEventListener('keydown', e => {
+      if (touchScreen.matches && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); window.location.reload(); }
+    });
+
+    // No pinch-zoom: iPhone and iPad Safari ignore "user-scalable=no", so stop their pinch gesture directly
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach(type => document.addEventListener(type, e => e.preventDefault()));
 
     window.addEventListener('beforeprint', preparePrint);
     window.addEventListener('afterprint', finishPrint);
@@ -669,6 +734,8 @@ const App = (() => {
 
     const fresh = blankState();
     fresh.name = (d.sessionName || '').trim().slice(0, MAX_SESSION_NAME) || defaultSessionName();
+    fresh.startedMs = Date.now();
+    fresh.startedAt = Session.timeLabelNow(new Date(fresh.startedMs));
     const ctx = addSessionToPage(Storage.newId(), fresh);
     ctx.root.open = true;
     state.config = { numPlayers: d.numPlayers, numCourts: d.numCourts, matchType: d.matchType, ...setup };
@@ -705,7 +772,7 @@ const App = (() => {
 
   function generateMatchForCourt(court) {
     const busyIds = getBusyPlayerIds();
-    const plan = Queue.generateMatch(state.players, busyIds, state.config.matchType, state.matchSeq, state.waitOverride, state.nextMatchId);
+    const plan = Queue.generateMatch(state.players, busyIds, state.config.matchType, state.matchSeq, state.waitOverride, state.nextMatchId, { strictRest: state.strictRest });
     if (!plan) {
       court.activeMatch = null;
       court.idleReason = 'Waiting for enough players to free up.';
@@ -944,11 +1011,6 @@ const App = (() => {
     setTimeout(finish, 3000 + line.text.length * 150);
   }
 
-  /** The players who should get ready: a full match's worth (4 in doubles, 2 in singles) from the front of the waiting list. */
-  function readyNames() {
-    return callOrder().order.slice(0, state.config.perMatch).map(p => p.name);
-  }
-
   /** When a match is completed: the winners, and the score if one was recorded. This is the only automatic
    *  announcement (and only when the voice toggle is on). `score` is [winner's score, other score] or null. */
   function announceResult(winnerIds, score) {
@@ -957,15 +1019,28 @@ const App = (() => {
     speakLines([{ text: `Congratulations to the winners, ${winners}.${score ? ` The score was ${score[0]} to ${score[1]}.` : ''}` }]);
   }
 
-  /** Say who should get ready. Works even when Voice is off, since it's an explicit tap. */
+  /** Say who is in the next match: the highlighted "Next to play" players who are waiting, plus anyone
+   *  playing right now who will go straight back on. Works even when Voice is off, since it's an explicit tap. */
   function announceNextUp() {
     if (!speech) return;
-    const ready = readyNames();
-    if (!ready.length) {
+    const busyIds = getBusyPlayerIds();
+    const { order, nextCount } = callOrder(busyIds);
+    const waiting = order.slice(0, nextCount).map(p => p.name);
+    const nextMatch = forecastNextMatch(busyIds);
+    const again = state.players.filter(p => nextMatch.has(p.id) && busyIds.has(p.id));
+    if (!waiting.length && !again.length) {
       showToast('No one is waiting right now.');
       return;
     }
-    speakLines([{ text: `Next up, please get ready: ${joinNames(ready)}.` }], true);
+
+    let text = waiting.length ? `Next up, please get ready: ${joinNames(waiting)}.` : 'Next up:';
+    if (again.length) {
+      const courts = [...new Set(again.map(p => Session.locate(state, p.id).courtId))];
+      const where = courts.length === 1 ? `Court ${courts[0]}` : 'court';
+      const who = joinNames(again.map(p => p.name));
+      text += `${waiting.length ? ' Also' : ''} ${who}, who ${again.length === 1 ? 'is' : 'are'} playing on ${where} now and will play again.`;
+    }
+    speakLines([{ text }], true);
   }
 
   /** Say who is playing on each court right now. Works even when Voice is off, since it's an explicit tap. */
@@ -1664,6 +1739,12 @@ const App = (() => {
     const waiting = Session.waitingOrder(state).length;
     const matches = state.history.length;
     el.headName.textContent = state.name;
+    // When the session started: date and time (hidden if unknown)
+    const started = state.startedMs ? new Date(state.startedMs) : null;
+    el.headStarted.hidden = !started;
+    el.headStarted.textContent = started
+      ? `Started ${started.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })} · ${Session.timeLabelNow(started)}`
+      : '';
     el.headStatus.textContent = [
       `${playing} ${plural(playing, 'court')} playing`,
       `${waiting} waiting`,
@@ -1715,16 +1796,21 @@ const App = (() => {
       .join('');
   }
 
-  /** Player list for the PDF: in join order, with joined/left notes. */
+  /** When a player started, joined, left and came back, e.g. "Started 9:05 AM · Left 10:40 AM".
+   *  `lower` gives "started 9:05 AM · left 10:40 AM" for the PDF notes. */
+  function timelineText(p, lower = false) {
+    return Session.playerTimeline(state, p)
+      .map(item => `${lower ? item.label.toLowerCase() : item.label} ${item.at}`)
+      .join(' · ');
+  }
+
+  /** Player list for the PDF: in join order, with when each started, joined, left or came back. */
   function pdfRoster() {
-    return state.players.slice().sort((a, b) => a.id - b.id).map(p => {
-      const left = !Queue.isActive(p);
-      let note = '';
-      if (left) note = p.leftAt ? `left ${p.leftAt}` : 'left';
-      else if (p.rejoinedAt) note = `rejoined ${p.rejoinedAt}`;
-      else if (p.joinedAt) note = `joined ${p.joinedAt}`;
-      return { name: p.name, note, left };
-    });
+    return state.players.slice().sort((a, b) => a.id - b.id).map(p => ({
+      name: p.name,
+      note: timelineText(p, true),
+      left: !Queue.isActive(p),
+    }));
   }
 
   // ---- courts ----
@@ -1798,6 +1884,13 @@ const App = (() => {
         </div>`;
     } else {
       const winnerLabel = m.winner === 'team1' ? 'Team 1' : 'Team 2';
+      // The winning team's score box comes first, so you type their score first
+      const scoreField = team => `
+            <label class="score-field${m.winner === team ? ' is-winner' : ''}">
+              <span>${team === 'team1' ? 'Team 1' : 'Team 2'}${m.winner === team ? ' · Winner' : ''}</span>
+              <input type="number" min="0" inputmode="numeric" data-role="score-input" data-court-id="${court.id}" data-team="${team}" value="${escapeHtml(team === 'team1' ? m.team1ScoreInput : m.team2ScoreInput)}" placeholder="–" />
+            </label>`;
+      const scoreFields = (m.winner === 'team1' ? ['team1', 'team2'] : ['team2', 'team1']).map(scoreField).join('');
       decision = `
         <div class="court-decision is-decided">
           <div class="decided-row">
@@ -1806,14 +1899,7 @@ const App = (() => {
           </div>
           <div class="score-label">Final score <span>(optional)</span></div>
           <div class="score-inputs">
-            <label class="score-field">
-              <span>Team 1</span>
-              <input type="number" min="0" inputmode="numeric" data-role="score-input" data-court-id="${court.id}" data-team="team1" value="${escapeHtml(m.team1ScoreInput)}" placeholder="–" />
-            </label>
-            <label class="score-field">
-              <span>Team 2</span>
-              <input type="number" min="0" inputmode="numeric" data-role="score-input" data-court-id="${court.id}" data-team="team2" value="${escapeHtml(m.team2ScoreInput)}" placeholder="–" />
-            </label>
+            ${scoreFields}
           </div>
           <button type="button" class="btn btn-primary btn-block" data-action="complete-match" data-court-id="${court.id}">${Icons.svg('check')}Complete Match</button>
         </div>`;
@@ -1838,23 +1924,27 @@ const App = (() => {
 
   // ---- waiting queue ----
 
-  /** "Next to play": pretend the earliest match ends and run the same pick the app will use. */
-  function forecastNextUp(busyIds) {
+  /** "Next to play": pretend the earliest match ends and run the same pick the app will use.
+   *  Everyone in that next match, including players on court now who would go straight back on. */
+  function forecastNextMatch(busyIds) {
     const live = state.courts.filter(c => c.activeMatch);
     const { matchType } = state.config;
     // Empty courts fill as soon as they can, so the next pick always comes after a match ends.
     // With no match in progress, there's nothing to predict.
     if (!live.length) {
-      return Queue.nextUpIds(state.players, busyIds, matchType, state.matchSeq, state.waitOverride, state.nextMatchId);
+      return Queue.nextUpIds(state.players, busyIds, matchType, state.matchSeq, state.waitOverride, state.nextMatchId, { strictRest: state.strictRest });
     }
     const finishing = live.reduce((a, b) => (b.activeMatch.matchId < a.activeMatch.matchId ? b : a)).activeMatch;
     const players = JSON.parse(JSON.stringify(state.players));
     const seq = state.matchSeq + 1;
     Queue.commitMatch(players, { courtId: 0, team1: finishing.team1, team2: finishing.team2, winner: 'team1', team1Score: null, team2Score: null, startSeq: finishing.startSeq }, seq);
     const stillBusy = new Set([...busyIds].filter(id => !finishing.team1.includes(id) && !finishing.team2.includes(id)));
-    const ids = Queue.nextUpIds(players, stillBusy, matchType, seq, state.waitOverride, state.nextMatchId);
-    // Only highlight players who are waiting right now
-    return new Set([...ids].filter(id => !busyIds.has(id)));
+    return Queue.nextUpIds(players, stillBusy, matchType, seq, state.waitOverride, state.nextMatchId, { strictRest: state.strictRest });
+  }
+
+  /** The "Next to play" highlight: only players who are waiting right now. */
+  function forecastNextUp(busyIds) {
+    return new Set([...forecastNextMatch(busyIds)].filter(id => !busyIds.has(id)));
   }
 
   /** Waiting list in the order players will be called: "Next to play" first, then everyone else. */
@@ -1872,10 +1962,11 @@ const App = (() => {
     const manual = new Set(state.waitOverride || []);
 
     el.btnResetOrder.hidden = !state.waitOverride;
+    el.strictRest.checked = !!state.strictRest;
     el.queueMode.className = `queue-mode${state.waitOverride ? ' is-manual' : ''}`;
     el.queueMode.html = state.waitOverride
       ? `${Icons.svg('hand')}<span><strong>Manual order (temporary).</strong> Players tagged “Manual” go first, in this order, until they are called to a court. Anyone finishing a match rejoins after them in automatic order. Fixed pairs are still called together.</span>`
-      : `${Icons.svg('clock')}<span>Automatic order: fewest games first, then longest wait. Nobody plays two games in a row. Use the arrows to override temporarily.</span>`;
+      : `${Icons.svg('clock')}<span>Automatic order: fewest games first, then longest wait. Players who just finished rest first. Use the arrows to override temporarily.</span>`;
 
     if (!waiting.length) {
       el.waitingList.html = '<p class="empty-note">Everyone is currently playing.</p>';
@@ -1943,9 +2034,8 @@ const App = (() => {
             <div class="pm-meta">
               <span class="badge ${statusBadge[status.key]}">${status.label}</span>
               <span class="pm-games">${p.gamesPlayed} ${plural(p.gamesPlayed, 'game')}</span>
-              ${p.rejoinedAt && Queue.isActive(p) ? `<span class="pm-games">· Rejoined ${escapeHtml(p.rejoinedAt)}</span>`
-                : p.joinedAt ? `<span class="pm-games">· Joined ${escapeHtml(p.joinedAt)}</span>` : ''}
             </div>
+            ${timelineText(p) ? `<div class="pm-times">${Icons.svg('clock')}${escapeHtml(timelineText(p))}</div>` : ''}
             ${partnerLine}
           </li>`;
       })
@@ -1960,11 +2050,16 @@ const App = (() => {
     return `<span class="rate ${pct >= 50 ? 'rate-high' : 'rate-low'}">${pct}%</span>`;
   }
 
+  /** Everyone who played (including players who left), most games first. Used by the table and the PDF. */
+  function statsPlayers() {
+    return state.players
+      .slice()
+      .sort((a, b) => b.gamesPlayed - a.gamesPlayed || a.name.localeCompare(b.name));
+  }
+
   function renderStats() {
     const anyScores = state.players.some(p => p.scoredGames > 0);
-    const players = state.players
-      .slice() // everyone who played, including players who left
-      .sort((a, b) => b.gamesPlayed - a.gamesPlayed || a.name.localeCompare(b.name));
+    const players = statsPlayers();
     const removedTag = p => (Queue.isActive(p) ? '' : ` <span class="muted-tag">left${p.leftAt ? ` ${escapeHtml(p.leftAt)}` : ''}</span>`);
     const pts = (p, key) => (p.scoredGames > 0 ? p[key] : '—');
 
@@ -2005,7 +2100,7 @@ const App = (() => {
 
   // ---- history ----
 
-  /** PDF list: one row per match, newest first. */
+  /** PDF list: one row per match, oldest first (match #1 at the top). */
   function renderHistoryPrint() {
     if (!state.history.length) {
       el.historyPrintBody.innerHTML = '<tr><td colspan="7" class="hp-empty">No matches completed yet.</td></tr>';
@@ -2013,7 +2108,6 @@ const App = (() => {
     }
     el.historyPrintBody.innerHTML = state.history
       .slice()
-      .reverse()
       .map(h => {
         const t1 = historyNames(h.team1, h.team1Names);
         const t2 = historyNames(h.team2, h.team2Names);
@@ -2041,8 +2135,12 @@ const App = (() => {
       el.historyList.html = '<p class="empty-note">No matches completed yet.</p>';
       return;
     }
-    el.historyList.html = state.history
-      .slice()
+    // Only the latest matches are drawn, so the page stays quick in long sessions ("Show older matches" adds more).
+    // The PDF and the print list always include every match.
+    const shown = Math.min(state.history.length, active.historyLimit || HISTORY_PAGE);
+    const older = state.history.length - shown;
+    const cards = state.history
+      .slice(-shown)
       .reverse()
       .map((h, idx) => {
         const t1 = historyNames(h.team1, h.team1Names);
@@ -2070,6 +2168,9 @@ const App = (() => {
           </article>`;
       })
       .join('');
+    el.historyList.html = cards + (older > 0
+      ? `<button type="button" class="btn btn-secondary btn-sm history-more" data-action="more-history">Show older matches (${older} more)</button>`
+      : '');
   }
 
   // ---------- export ----------
@@ -2099,16 +2200,73 @@ const App = (() => {
     }
   }
 
-  /** Data for the PDF, newest match first. */
-  function buildPdfData() {
+  /** What every PDF needs: session details and the sponsor images. */
+  function pdfBase() {
     const c = state.config;
     return {
       sessionName: state.name,
       dateLabel: localDateISO(new Date()),
       courts: c.numCourts,
       matchType: c.matchType === 'doubles' ? 'Doubles' : 'Singles',
+      sponsorUrl: document.querySelector('a.sponsor').href,
+      logoUrl: 'img/pickle-sa-balay.webp',
+      watermarkUrl: 'img/pickle-sa-balay-badge.webp',
+    };
+  }
+
+  /** Export the player statistics as a PDF (same look as the match history PDF). */
+  let exportingStats = false;
+  async function exportStatsPdf() {
+    if (exportingStats || !active) return;
+    exportingStats = true;
+    const btn = el.btnExportStatsPdf;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `${Icons.svg('printer')}Preparing…`;
+    try {
+      await PdfExport.generateStats(buildStatsPdfData());
+    } catch (err) {
+      console.warn('Statistics PDF export failed.', err);
+      showToast('Couldn’t create the PDF. Check your internet connection and try again.');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = original;
+      exportingStats = false;
+    }
+  }
+
+  /** Data for the statistics PDF: the same rows and order as the Player Statistics table. */
+  function buildStatsPdfData() {
+    const hasScores = state.players.some(p => p.scoredGames > 0);
+    return {
+      ...pdfBase(),
+      matches: state.history.length,
+      hasScores,
+      stats: statsPlayers().map(p => {
+        const left = !Queue.isActive(p);
+        const pct = p.gamesPlayed > 0 ? Math.round((p.wins / p.gamesPlayed) * 100) : null;
+        return {
+          name: p.name,
+          games: p.gamesPlayed,
+          wins: p.wins,
+          losses: p.losses,
+          winRate: pct == null ? '—' : `${pct}%`,
+          winRatePct: pct,
+          ptsFor: p.scoredGames > 0 ? p.pointsScored : '—',
+          ptsAgainst: p.scoredGames > 0 ? p.pointsAgainst : '—',
+          left,
+          note: timelineText(p, true),
+        };
+      }),
+    };
+  }
+
+  /** Data for the PDF, oldest match first (match #1 at the top). */
+  function buildPdfData() {
+    return {
+      ...pdfBase(),
       players: pdfRoster(),
-      history: state.history.slice().reverse().map(h => ({
+      history: state.history.slice().map(h => ({
         number: h.number,
         time: h.timeLabel || '',
         court: h.courtId,
@@ -2118,9 +2276,6 @@ const App = (() => {
         score: h.team1Score == null ? null : `${h.team1Score}–${h.team2Score}`,
         manual: !!h.manual,
       })),
-      sponsorUrl: document.querySelector('a.sponsor').href,
-      logoUrl: 'img/pickle-sa-balay.webp',
-      watermarkUrl: 'img/pickle-sa-balay-badge.webp',
     };
   }
 

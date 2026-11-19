@@ -44,7 +44,8 @@ const Storage = (() => {
         const key = localStorage.key(i);
         if (!key || !key.startsWith(SESSION_PREFIX)) continue;
         const saved = parse(localStorage.getItem(key));
-        found.push({ id: key.slice(SESSION_PREFIX.length), name: (saved && typeof saved.name === 'string') ? saved.name : '', createdAt: Date.now() });
+        // The real creation time is unknown here, so leave it out rather than guess
+        found.push({ id: key.slice(SESSION_PREFIX.length), name: (saved && typeof saved.name === 'string') ? saved.name : '', createdAt: null });
       }
     }, undefined);
     if (found.length) writeList(found);

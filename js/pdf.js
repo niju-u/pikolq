@@ -1,7 +1,7 @@
 /**
- * pdf.js: builds the match history PDF with jsPDF.
- * It looks the same on every device and has no browser header/footer.
- * The library only loads when Export is pressed. If it fails, the app prints instead.
+ * pdf.js: builds the PDFs (match history, player statistics) with jsPDF.
+ * They look the same on every device and have no browser header/footer.
+ * The library only loads when Export is pressed. If it fails, the caller handles it.
  */
 
 const PdfExport = (() => {
@@ -64,14 +64,11 @@ const PdfExport = (() => {
   }
 
   /**
-   * data = {
-   *   sessionName, dateLabel, courts, matchType, players,
-   *   history: [{ number, time, court, team1, team2, winner, score, manual }],  // newest first
-   *   sponsorUrl, logoUrl, watermarkUrl
-   * }
-   * options.save (default true): download the file. If false, just return the doc.
+   * Start a PDF: faint sponsor badge behind every page, title, subtitle, sponsor logo and a rule.
+   * data needs { sessionName, dateLabel, courts, matchType, sponsorUrl, logoUrl, watermarkUrl }.
+   * Returns { doc, W, H, M, y, docTitle, drawWatermark } where y is where content can begin.
    */
-  async function generate(data, options = {}) {
+  async function startDocument(data, title) {
     await loadLibs();
     const [watermark, logo] = await Promise.all([
       loadImageAsPng(data.watermarkUrl, 700),
@@ -86,7 +83,7 @@ const PdfExport = (() => {
 
     // Session name with characters that aren't allowed in file names removed
     const safeName = (data.sessionName || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
-    const docTitle = ['Pickleball Match History', safeName, data.dateLabel].filter(Boolean).join(' - ');
+    const docTitle = [title, safeName, data.dateLabel].filter(Boolean).join(' - ');
     doc.setProperties({ title: docTitle, subject: 'Pickleball open play results', creator: 'Pickleball Open Play' });
 
     // ---- faint sponsor badge behind every page (drawn first) ----
@@ -107,7 +104,7 @@ const PdfExport = (() => {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(19);
     doc.setTextColor(...TEXT);
-    doc.text('Pickleball Match History', M, M + 7);
+    doc.text(title, M, M + 7);
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
@@ -135,32 +132,61 @@ const PdfExport = (() => {
     doc.line(M, y, W - M, y);
     y += 8;
 
+    return { doc, W, H, M, y, docTitle, drawWatermark };
+  }
+
+  function saveDocument(doc, docTitle, options) {
+    if (options.save === false) return;
+    try {
+      doc.save(`${docTitle}.pdf`);
+    } catch (err) {
+      // Some in-app browsers block downloads, so show the PDF instead
+      window.open(doc.output('bloburl'), '_blank');
+    }
+  }
+
+  /**
+   * Match history PDF.
+   * data = {
+   *   sessionName, dateLabel, courts, matchType, players,
+   *   history: [{ number, time, court, team1, team2, winner, score, manual }],  // oldest first
+   *   sponsorUrl, logoUrl, watermarkUrl
+   * }
+   * options.save (default true): download the file. If false, just return the doc.
+   */
+  async function generate(data, options = {}) {
+    const { doc, W, H, M, y: startY, docTitle, drawWatermark } = await startDocument(data, 'Pickleball Match History');
+    let y = startY;
+
     // ---- players: numbered, more columns for more players ----
     // players: [{ name, note, left }] or plain names
     const roster = data.players.map(p => (typeof p === 'string' ? { name: p, note: '', left: false } : p));
     const n = roster.length;
     const leftCount = roster.filter(p => p.left).length;
-    const cols = playerColumns(n);
-    const rows = Math.ceil(n / cols);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11.5);
     doc.setTextColor(...TEXT);
     doc.text(`Players (${n}${leftCount ? ` · ${leftCount} left` : ''})`, M, y);
 
+    // Two side-by-side groups of: number, name, and when they started / joined / left
+    const groups = 2;
+    const rows = Math.ceil(n / groups);
+    const groupWidth = (W - 2 * M) / groups;
+    const nameWidth = groupWidth * 0.42;
     const playerBody = Array.from({ length: rows }, (_, r) => {
       const row = [];
-      for (let c = 0; c < cols; c++) {
-        const i = c * rows + r; // fill each column top to bottom
+      for (let g = 0; g < groups; g++) {
+        const i = g * rows + r; // fill each group top to bottom
         const p = roster[i];
-        row.push(p ? String(i + 1) : '', p ? (p.note ? `${p.name}  (${p.note})` : p.name) : '');
+        row.push(p ? String(i + 1) : '', p ? p.name : '', p ? (p.note || '') : '');
       }
       return row;
     });
-    const colWidth = (W - 2 * M) / cols;
     const playerColumnStyles = {};
-    for (let c = 0; c < cols; c++) {
-      playerColumnStyles[c * 2] = { cellWidth: 8, halign: 'right', fontStyle: 'bold', fontSize: 7.5, textColor: PLUM };
-      playerColumnStyles[c * 2 + 1] = { cellWidth: colWidth - 8 };
+    for (let g = 0; g < groups; g++) {
+      playerColumnStyles[g * 3] = { cellWidth: 8, halign: 'right', fontStyle: 'bold', fontSize: 7.5, textColor: PLUM };
+      playerColumnStyles[g * 3 + 1] = { cellWidth: nameWidth };
+      playerColumnStyles[g * 3 + 2] = { cellWidth: groupWidth - 8 - nameWidth, fontSize: 7.5, textColor: MUTED };
     }
     doc.autoTable({
       startY: y + 2.5,
@@ -168,15 +194,16 @@ const PdfExport = (() => {
       theme: 'plain',
       margin: { left: M, right: M, top: M },
       styles: {
-        font: 'helvetica', fontSize: 9.5, textColor: TEXT, overflow: 'ellipsize',
+        font: 'helvetica', fontSize: 9.5, textColor: TEXT, valign: 'middle',
         cellPadding: { top: 1.4, bottom: 1.4, left: 1.2, right: 2 },
         lineColor: LINE, lineWidth: { bottom: 0.15 },
       },
       columnStyles: playerColumnStyles,
       didParseCell: cell => {
-        if (cell.cell.raw === '') { cell.cell.styles.lineWidth = 0; return; }
-        const p = roster[Math.floor(cell.column.index / 2) * rows + cell.row.index];
-        if (p && p.left && cell.column.index % 2 === 1) {
+        const group = Math.floor(cell.column.index / 3);
+        const p = roster[group * rows + cell.row.index];
+        if (!p) { cell.cell.styles.lineWidth = 0; return; } // empty slot in the last row
+        if (p.left && cell.column.index % 3 === 1) {
           cell.cell.styles.textColor = MUTED;
           cell.cell.styles.fontStyle = 'italic';
         }
@@ -257,17 +284,104 @@ const PdfExport = (() => {
       willDrawPage: drawWatermark,
     });
 
-    if (options.save !== false) {
-      const fileName = `${docTitle}.pdf`;
-      try {
-        doc.save(fileName);
-      } catch (err) {
-        // Some in-app browsers block downloads, so show the PDF instead
-        window.open(doc.output('bloburl'), '_blank');
-      }
-    }
+    saveDocument(doc, docTitle, options);
     return doc;
   }
 
-  return { generate, loadLibs, playerColumns };
+  /**
+   * Player statistics PDF.
+   * data = {
+   *   sessionName, dateLabel, courts, matchType, matches, hasScores,
+   *   stats: [{ name, games, wins, losses, winRate, winRatePct, ptsFor, ptsAgainst, left, note }],
+   *   sponsorUrl, logoUrl, watermarkUrl
+   * }
+   * Rows come in the order they should be printed. winRatePct is a number, or null if no games.
+   */
+  async function generateStats(data, options = {}) {
+    const { doc, W, M, y, docTitle, drawWatermark } = await startDocument(data, 'Pickleball Player Statistics');
+
+    const n = data.stats.length;
+    const leftCount = data.stats.filter(s => s.left).length;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11.5);
+    doc.setTextColor(...TEXT);
+    doc.text(`Players (${n}${leftCount ? ` · ${leftCount} left` : ''})`, M, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(...MUTED);
+    doc.text(`${data.matches} match${data.matches === 1 ? '' : 'es'} played`, W - M, y, { align: 'right' });
+
+    const head = ['#', 'Player', 'Games', 'Wins', 'Losses', 'Win Rate'];
+    if (data.hasScores) head.push('Pts For', 'Pts Against');
+    // The player cell is drawn by hand below (name, with when they started/joined/left underneath)
+    const body = data.stats.map((s, i) => {
+      const row = [String(i + 1), { content: '', styles: { minCellHeight: s.note ? 10 : 7.5 } }, String(s.games), String(s.wins), String(s.losses), s.winRate];
+      if (data.hasScores) row.push(String(s.ptsFor), String(s.ptsAgainst));
+      return row;
+    });
+
+    const numeric = {};
+    for (let c = 2; c < head.length; c++) numeric[c] = { halign: 'right', cellWidth: c >= 6 ? 24 : 18 };
+    doc.autoTable({
+      startY: y + 2.5,
+      head: [head],
+      body,
+      theme: 'plain',
+      showHead: 'everyPage',
+      margin: { left: M, right: M, top: M },
+      styles: {
+        font: 'helvetica', fontSize: 9.5, textColor: TEXT, valign: 'middle', overflow: 'ellipsize',
+        cellPadding: { top: 2, bottom: 2, left: 1.5, right: 1.5 },
+        lineColor: LINE, lineWidth: { bottom: 0.15 },
+      },
+      headStyles: {
+        fontStyle: 'bold', fontSize: 7.5, textColor: MUTED,
+        lineColor: TEXT, lineWidth: { bottom: 0.4 },
+      },
+      columnStyles: Object.assign({ 0: { cellWidth: 9, fontStyle: 'bold', textColor: PLUM }, 1: { fontStyle: 'bold' } }, numeric),
+      didParseCell: cell => {
+        if (cell.section === 'head') {
+          if (cell.column.index >= 2) cell.cell.styles.halign = 'right';
+          return;
+        }
+        const s = data.stats[cell.row.index];
+        if (!s) return;
+        const col = cell.column.index;
+        if (col === 5) {
+          cell.cell.styles.fontStyle = 'bold';
+          cell.cell.styles.textColor = s.winRatePct == null ? MUTED : (s.winRatePct >= 50 ? PLUM : TEXT);
+        } else if (col >= 6 && String(cell.cell.raw) === '—') {
+          cell.cell.styles.textColor = MUTED;
+        }
+      },
+      didDrawCell: cell => {
+        if (cell.section !== 'body' || cell.column.index !== 1) return;
+        const s = data.stats[cell.row.index];
+        if (!s) return;
+        const x = cell.cell.x + 1.5;
+        const maxWidth = cell.cell.width - 3;
+        const fit = (text) => {
+          let t = String(text);
+          while (t.length > 1 && doc.getTextWidth(t) > maxWidth) t = t.slice(0, -2) + '…';
+          return t;
+        };
+        doc.setFont('helvetica', s.left ? 'italic' : 'bold');
+        doc.setFontSize(9.5);
+        doc.setTextColor(...(s.left ? MUTED : TEXT));
+        doc.text(fit(s.name), x, s.note ? cell.cell.y + 4.6 : cell.cell.y + cell.cell.height / 2 + 1.2);
+        if (s.note) {
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(7);
+          doc.setTextColor(...MUTED);
+          doc.text(fit(s.note), x, cell.cell.y + 8);
+        }
+      },
+      willDrawPage: drawWatermark,
+    });
+
+    saveDocument(doc, docTitle, options);
+    return doc;
+  }
+
+  return { generate, generateStats, loadLibs, playerColumns };
 })();

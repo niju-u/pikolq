@@ -885,6 +885,102 @@ main {
 
 .queue-mode .icon { width: 16px; height: 16px; margin-top: 1px; }
 
+/* Strict rest switch + plain-language help */
+.rest-setting {
+  background: var(--lav-25);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 4px 12px 6px;
+  margin-bottom: 14px;
+}
+
+.switch-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--touch);
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.switch-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.switch {
+  flex: none;
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background 0.15s;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--white);
+  box-shadow: 0 1px 3px rgba(51, 40, 59, 0.3);
+  transition: transform 0.15s;
+}
+
+.switch-input:checked + .switch { background: var(--plum); }
+.switch-input:checked + .switch::after { transform: translateX(18px); }
+.switch-input:focus-visible + .switch { box-shadow: var(--focus); }
+
+.switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.switch-text small {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+.rest-help summary {
+  cursor: pointer;
+  color: var(--plum);
+  font-weight: 700;
+  font-size: 0.8rem;
+  padding: 6px 0;
+}
+
+.rest-help-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0 6px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.rest-help-body p { margin: 0; }
+
+.rest-help-body ul {
+  list-style: disc;
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .queue-mode.is-manual {
   background: var(--warning-bg);
   color: var(--warning-fg);
@@ -1186,6 +1282,13 @@ main {
 }
 
 .history-actions [data-el="btn-clear-history"] { margin-left: auto; }
+
+.stats-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
 
 .history-list {
   display: grid;
@@ -1694,7 +1797,18 @@ main {
 .session-block[open] .session-head-chevron { transform: none; }
 .session-head-main { flex: 1 1 180px; min-width: 0; }
 .session-head-name { font-size: 1.12rem; font-weight: 800; color: var(--plum); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-head-started { font-size: 0.78rem; font-weight: 600; color: var(--plum); margin-top: 2px; }
 .session-head-status { font-size: 0.82rem; color: var(--text-2); margin-top: 2px; }
+
+/* When each player started / joined / left, on their Player Management card */
+.pm-times {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+.pm-times .icon { width: 13px; height: 13px; margin-top: 1px; flex: none; }
 .session-head-chips { justify-content: flex-end; gap: 8px; }
 .session-head-chips .summary-chip { padding: 5px 10px 5px 6px; box-shadow: none; }
 .session-head-chips .summary-icon { width: 28px; height: 28px; border-radius: 8px; }
@@ -2018,13 +2132,18 @@ main {
   .setup-config { order: 1; }
   .setup-names { order: 2; }
   #setup-errors { order: 3; }
+  /* Truly fixed (not sticky), so it stays at the bottom of the screen even when the form is short
+     or the browser's address bar moves. The form gets matching space at the bottom so nothing hides behind it. */
+  .setup-view { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
   .setup-actions {
     order: 4;
-    position: sticky;
+    position: fixed;
+    left: 0;
+    right: 0;
     bottom: 0;
-    z-index: 5;
-    margin: 0 calc(-1 * var(--gutter)) calc(-1 * max(40px, env(safe-area-inset-bottom, 0px)));
-    padding: 12px var(--gutter) max(12px, env(safe-area-inset-bottom, 0px));
+    z-index: 25;
+    margin: 0;
+    padding: 12px max(var(--gutter), env(safe-area-inset-right, 0px)) max(12px, env(safe-area-inset-bottom, 0px)) max(var(--gutter), env(safe-area-inset-left, 0px));
     background: rgba(255, 255, 255, 0.95);
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
@@ -2310,3 +2429,33 @@ main {
   .score-pill { border-color: #999; }
   .empty-note { padding: 10px 0; }
 }
+
+/* ---------- No zooming ---------- */
+/* The app is a fixed-size board for use at the courts: no pinch or double-tap zoom. */
+html {
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* ---------- No pull-to-reload ---------- */
+/* Pulling the page down at the top doesn't refresh it (or bounce), so a stray swipe can't reload the board. */
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
+/* ---------- Logo reloads the page on phones/tablets ---------- */
+.brand[data-reload] {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.brand[data-reload]:active { opacity: 0.7; }
+.brand[data-reload]:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--r-md); }
+
+/* Score entry: the winner's box comes first and is marked */
+.score-field.is-winner > span { color: var(--success-fg); font-weight: 800; }
+.score-field.is-winner input { border-color: var(--success-line); background: var(--success-bg); }
+
+/* "Show older matches" sits on its own row under the history cards */
+.history-more { grid-column: 1 / -1; justify-self: center; }
