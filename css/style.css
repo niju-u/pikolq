@@ -385,6 +385,13 @@ main {
   flex-wrap: wrap;
 }
 
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .panel-title {
   display: flex;
   align-items: center;

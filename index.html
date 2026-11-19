@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
-<link rel="stylesheet" href="css/style.css?v=65" />
+<link rel="stylesheet" href="css/style.css?v=72" />
 </head>
 <body>
 <header class="app-header no-print">
@@ -53,6 +53,7 @@
     <div class="sessions-toolbar no-print" id="sessions-toolbar" hidden>
       <h2 class="sessions-title"><span class="panel-icon" data-icon="court"></span>Sessions <span class="session-count" id="sessions-count"></span></h2>
       <div class="sessions-toolbar-actions">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-voice" aria-pressed="true" title="Automatically say the winners and score when a match is completed" hidden></button>
         <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-all">Collapse all</button>
         <button type="button" class="btn btn-primary btn-sm" id="btn-new-session"><span data-icon="plus"></span>New Session</button>
       </div>
@@ -180,7 +181,11 @@
           <section class="panel panel-courts no-print">
             <div class="panel-head">
               <h2 class="panel-title"><span class="panel-icon" data-icon="play"></span>Currently Playing</h2>
-              <span class="badge badge-success"><span class="badge-dot"></span>Session Active</span>
+              <div class="panel-head-actions">
+                <button type="button" class="btn btn-secondary btn-sm" data-el="btn-voice-settings" title="Choose the announcer voice for this session" hidden><span data-icon="settings"></span>Voice</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-el="btn-announce-playing" title="Say out loud who is playing on each court" hidden><span data-icon="volume"></span>Announce players</button>
+                <span class="badge badge-success"><span class="badge-dot"></span>Session Active</span>
+              </div>
             </div>
             <div class="courts-grid" data-el="courts-grid"></div>
           </section>
@@ -190,7 +195,10 @@
             <section class="panel panel-queue" data-el="waiting-card">
               <div class="panel-head">
                 <h2 class="panel-title"><span class="panel-icon" data-icon="users"></span>Waiting Queue</h2>
-                <button type="button" class="link-btn" data-el="btn-reset-order" hidden>Reset to automatic</button>
+                <div class="panel-head-actions">
+                  <button type="button" class="link-btn" data-el="btn-reset-order" hidden>Reset to automatic</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-el="btn-announce" title="Say out loud who is next to play" hidden><span data-icon="volume"></span>Announce next</button>
+                </div>
               </div>
               <p class="queue-mode" data-el="queue-mode"></p>
               <div class="queue" data-el="waiting-list"></div>
@@ -304,12 +312,12 @@
 <!-- Short pop-up messages -->
 <div class="toast no-print" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/icons.js?v=65"></script>
-<script src="js/scheduler.js?v=65"></script>
-<script src="js/queue.js?v=65"></script>
-<script src="js/storage.js?v=65"></script>
-<script src="js/session.js?v=65"></script>
-<script src="js/pdf.js?v=65"></script>
-<script src="js/app.js?v=65"></script>
+<script src="js/icons.js?v=72"></script>
+<script src="js/scheduler.js?v=72"></script>
+<script src="js/queue.js?v=72"></script>
+<script src="js/storage.js?v=72"></script>
+<script src="js/session.js?v=72"></script>
+<script src="js/pdf.js?v=72"></script>
+<script src="js/app.js?v=72"></script>
 </body>
 </html>

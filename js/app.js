@@ -43,12 +43,18 @@ const App = (() => {
   let modal = null; // set while the pop-up is open
   const MAX_SESSION_NAME = 40;
 
+  // Voice announcements use the browser's built-in speech (no libraries). null if unsupported.
+  const speech = ('speechSynthesis' in window && 'SpeechSynthesisUtterance' in window) ? window.speechSynthesis : null;
+  const speechLang = /^en/i.test(navigator.language || '') ? navigator.language : 'en-US';
+  let voiceOn = Storage.getPref('voice', '1') === '1';
+
   // ---------- init ----------
 
   function init() {
     Icons.hydrate(document);
     cacheEls();
     bindEvents();
+    renderVoiceButton();
 
     Storage.migrateLegacy();
     Storage.listSessions().forEach(entry => openSavedSession(entry.id));
@@ -128,6 +134,9 @@ const App = (() => {
       waitingList: get('waiting-list'),
       queueMode: get('queue-mode'),
       btnResetOrder: get('btn-reset-order'),
+      btnAnnounce: get('btn-announce'),
+      btnAnnouncePlaying: get('btn-announce-playing'),
+      btnVoiceSettings: get('btn-voice-settings'),
       statsBody: get('stats-body'),
       statsCards: get('stats-cards'),
       statsHead: get('stats-table').querySelector('thead tr'),
@@ -199,6 +208,12 @@ const App = (() => {
       Session.resetWaitingOrder(state);
       commitChange();
     });
+    e.btnAnnounce.hidden = !speech;
+    on(ctx, e.btnAnnounce, 'click', announceNextUp);
+    e.btnAnnouncePlaying.hidden = !speech;
+    on(ctx, e.btnAnnouncePlaying, 'click', announcePlaying);
+    e.btnVoiceSettings.hidden = !speech;
+    on(ctx, e.btnVoiceSettings, 'click', openVoiceModal);
     on(ctx, e.pmList, 'click', ev => {
       const btn = ev.target.closest('[data-action]');
       if (!btn) return;
@@ -338,6 +353,7 @@ const App = (() => {
     el.sessionsCount = document.getElementById('sessions-count');
     el.btnToggleAll = document.getElementById('btn-toggle-all');
     el.btnNewSession = document.getElementById('btn-new-session');
+    el.btnVoice = document.getElementById('btn-voice');
     el.btnCancelSetup = document.getElementById('btn-cancel-setup');
     el.inputSessionName = document.getElementById('input-session-name');
 
@@ -366,6 +382,7 @@ const App = (() => {
 
   function bindEvents() {
     el.btnNewSession.addEventListener('click', startNewSession);
+    el.btnVoice.addEventListener('click', toggleVoice);
     el.btnCancelSetup.addEventListener('click', () => showView('sessions'));
     el.btnToggleAll.addEventListener('click', () => {
       const open = ![...contexts.values()].some(ctx => ctx.root.open);
@@ -636,7 +653,12 @@ const App = (() => {
 
     if (!validation.valid) {
       el.setupErrors.hidden = false;
-      el.setupErrors.innerHTML = validation.errors.map(msg => `<div class="error-item">${escapeHtml(msg)}</div>`).join('');
+      // Show the first few problems, so a long list doesn't bury the form
+      const MAX_SHOWN = 6;
+      const shown = validation.errors.slice(0, MAX_SHOWN);
+      const hidden = validation.errors.length - shown.length;
+      if (hidden > 0) shown.push(`…and ${hidden} more. Fix these first.`);
+      el.setupErrors.innerHTML = shown.map(msg => `<div class="error-item">${escapeHtml(msg)}</div>`).join('');
       el.setupErrors.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
@@ -841,6 +863,207 @@ const App = (() => {
     persist();
     renderSession();
     [court.id].concat(filled).forEach(flashCourtUpdate);
+    const score = team1Score == null ? null : (m.winner === 'team1' ? [team1Score, team2Score] : [team2Score, team1Score]);
+    announceResult(m[m.winner], score);
+  }
+
+  // ---------- voice announcements ----------
+
+  /** "A", "A and B", "A, B, and C". */
+  function joinNames(names) {
+    if (names.length <= 2) return names.join(' and ');
+    return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+  }
+
+  // Each session has its own announcer voice (saved on this device). Until one is chosen, it uses
+  // Microsoft Mark if the device has it, otherwise the browser's default voice.
+  const VOICE_NAME = 'Microsoft Mark';
+  const VOICE_RATE = 1;
+  const VOICE_PITCH = 1.6;
+  // Voices have no gender field, so female voices are picked out by common names
+  const FEMALE_VOICE_HINT = /zira|aria|jenny|samantha|\bava\b|zoe|allison|susan|hazel|sonia|libby|michelle|karen|moira|tessa|fiona|victoria|female/i;
+
+  /** The active session's saved voice name, '' for the device default, or null if none was chosen. */
+  function sessionVoiceName() {
+    return active ? Storage.getPref(`voice_${active.id}`, null) : null;
+  }
+
+  /** Find a voice by name. '' means the device default; a missing voice falls back to Microsoft Mark. */
+  function findVoice(name) {
+    // The voice list can fill in after the page loads, so look it up each time
+    if (name === '') return null;
+    const voices = speech.getVoices();
+    return voices.find(v => v.name === name) || voices.find(v => v.name.includes(VOICE_NAME)) || null;
+  }
+
+  // Lines are spoken one at a time from our own queue, so a line can be followed by a pause.
+  const speechQueue = [];
+  let speechBusy = false;
+  let speechRun = 0; // changes when speech is stopped, so old lines don't carry on
+
+  function stopSpeaking() {
+    speechQueue.length = 0;
+    speechBusy = false;
+    speechRun += 1;
+    if (speech) speech.cancel();
+  }
+
+  /** Add lines to speak: [{ text, pause }] where pause is milliseconds of silence after the line.
+   *  The voice is the active session's, fixed now so a later session switch doesn't change it. */
+  function speakLines(lines, interrupt = false, voiceName = sessionVoiceName()) {
+    if (!speech) return;
+    if (interrupt) stopSpeaking();
+    speechQueue.push(...lines.filter(l => l && l.text).map(l => ({ voiceName, ...l })));
+    if (!speechBusy) speakNextLine();
+  }
+
+  function speakNextLine() {
+    const line = speechQueue.shift();
+    if (!line) {
+      speechBusy = false;
+      return;
+    }
+    speechBusy = true;
+    const run = speechRun;
+    let done = false;
+    const finish = () => {
+      if (done || run !== speechRun) return;
+      done = true;
+      setTimeout(() => { if (run === speechRun) speakNextLine(); }, line.pause || 0);
+    };
+    const utterance = new SpeechSynthesisUtterance(line.text);
+    const voice = findVoice(line.voiceName);
+    if (voice) utterance.voice = voice;
+    utterance.lang = voice ? voice.lang : speechLang;
+    utterance.rate = VOICE_RATE;
+    utterance.pitch = VOICE_PITCH;
+    utterance.onend = finish;
+    utterance.onerror = finish;
+    speech.speak(utterance);
+    // Some browsers never report the end of a line; don't let the queue get stuck
+    setTimeout(finish, 3000 + line.text.length * 150);
+  }
+
+  /** The players who should get ready: a full match's worth (4 in doubles, 2 in singles) from the front of the waiting list. */
+  function readyNames() {
+    return callOrder().order.slice(0, state.config.perMatch).map(p => p.name);
+  }
+
+  /** When a match is completed: the winners, and the score if one was recorded. This is the only automatic
+   *  announcement (and only when the voice toggle is on). `score` is [winner's score, other score] or null. */
+  function announceResult(winnerIds, score) {
+    if (!voiceOn || !speech) return;
+    const winners = joinNames(winnerIds.map(playerName));
+    speakLines([{ text: `Congratulations to the winners, ${winners}.${score ? ` The score was ${score[0]} to ${score[1]}.` : ''}` }]);
+  }
+
+  /** Say who should get ready. Works even when Voice is off, since it's an explicit tap. */
+  function announceNextUp() {
+    if (!speech) return;
+    const ready = readyNames();
+    if (!ready.length) {
+      showToast('No one is waiting right now.');
+      return;
+    }
+    speakLines([{ text: `Next up, please get ready: ${joinNames(ready)}.` }], true);
+  }
+
+  /** Say who is playing on each court right now. Works even when Voice is off, since it's an explicit tap. */
+  function announcePlaying() {
+    if (!speech) return;
+    const side = ids => joinNames(ids.map(playerName));
+    const lines = state.courts
+      .filter(c => c.activeMatch)
+      .map(c => ({ text: `Court ${c.id}: ${side(c.activeMatch.team1)}, versus ${side(c.activeMatch.team2)}.`, pause: 500 }));
+    if (!lines.length) {
+      showToast('No matches are in progress.');
+      return;
+    }
+    lines.unshift({ text: 'Currently playing.', pause: 400 });
+    speakLines(lines, true);
+  }
+
+  /** Pick this session's announcer voice, with a Test button. Saved on this device only. */
+  function openVoiceModal() {
+    if (!speech) return;
+    const voices = speech.getVoices();
+    if (!voices.length) {
+      showToast('No voices found on this device yet. Try again in a moment.');
+      return;
+    }
+    const saved = sessionVoiceName();
+    const currentVoice = saved === '' ? null : findVoice(saved);
+    let selected = currentVoice ? currentVoice.name : '';
+    // Start with all languages shown only if the current voice isn't English
+    let showAll = !!currentVoice && !/^en/i.test(currentVoice.lang);
+
+    const buildOptions = () => {
+      const english = voices.filter(v => /^en/i.test(v.lang));
+      const list = showAll || !english.length ? voices : english;
+      const opt = v => `<option value="${escapeHtml(v.name)}"${v.name === selected ? ' selected' : ''}>${escapeHtml(v.name)}</option>`;
+      const female = list.filter(v => FEMALE_VOICE_HINT.test(v.name));
+      const other = list.filter(v => !FEMALE_VOICE_HINT.test(v.name));
+      return `<option value=""${selected === '' ? ' selected' : ''}>Device default voice</option>`
+        + (female.length ? `<optgroup label="Female voices (guessed from the name)">${female.map(opt).join('')}</optgroup>` : '')
+        + (other.length ? `<optgroup label="Other voices">${other.map(opt).join('')}</optgroup>` : '');
+    };
+
+    openModal({
+      title: 'Announcer Voice',
+      saveLabel: 'Save Voice',
+      body: `
+        <div class="modal-stack">
+          <label class="field">
+            <span class="field-label">Voice for “${escapeHtml(state.name)}”</span>
+            <select id="m-voice">${buildOptions()}</select>
+          </label>
+          <label class="choice">
+            <input type="checkbox" id="m-voice-all" ${showAll ? 'checked' : ''} />
+            <span class="choice-name">Show voices for all languages</span>
+          </label>
+          <button type="button" class="btn btn-secondary" data-modal-action="test-voice">${Icons.svg('volume')}Test voice</button>
+          <p class="hint">Every session can have its own voice. Your choice is saved on this device only, and each device has its own voices.</p>
+        </div>`,
+      onChange: () => {
+        const select = q('#m-voice');
+        selected = select.value;
+        const wantAll = q('#m-voice-all').checked;
+        if (wantAll !== showAll) {
+          showAll = wantAll;
+          select.innerHTML = buildOptions();
+          select.value = selected; // may not exist in a shorter list; falls back to the first option
+          selected = select.value;
+        }
+      },
+      onAction: action => {
+        if (action !== 'test-voice') return;
+        const [a, b] = state.players.filter(Queue.isActive).map(p => p.name);
+        const who = b ? `${a} and ${b}` : (a || 'the team');
+        speakLines([{ text: `Congratulations to the winners, ${who}. The score was 11 to 7.` }], true, q('#m-voice').value);
+      },
+      onSave: () => {
+        const name = q('#m-voice').value;
+        Storage.setPref(`voice_${active.id}`, name);
+        stopSpeaking();
+        showToast(`Voice for “${state.name}”: ${name || 'device default'}.`);
+        return null;
+      },
+    });
+  }
+
+  function renderVoiceButton() {
+    el.btnVoice.setAttribute('aria-pressed', String(voiceOn));
+    el.btnVoice.innerHTML = `${Icons.svg(voiceOn ? 'volume' : 'volumeOff')}Winner voice ${voiceOn ? 'on' : 'off'}`;
+    el.btnVoice.hidden = !speech;
+  }
+
+  function toggleVoice() {
+    voiceOn = !voiceOn;
+    Storage.setPref('voice', voiceOn ? '1' : '0');
+    if (!voiceOn) stopSpeaking();
+    renderVoiceButton();
+    // Speaking on this tap also lets phones (iOS) allow later announcements
+    if (voiceOn) speakLines([{ text: 'Winner announcements on.' }], true);
   }
 
   function flashCourtUpdate(courtId) {
@@ -1272,8 +1495,16 @@ const App = (() => {
     renderSetup();
   }
 
+  let saveWarned = false;
   function persist() {
-    if (active) Storage.saveSession(active.id, state);
+    if (!active) return;
+    if (Storage.saveSession(active.id, state)) {
+      saveWarned = false;
+    } else if (!saveWarned) {
+      // Tell the organizer once, so they know a refresh would lose recent changes
+      saveWarned = true;
+      showToast('Couldn’t save: this browser’s storage is full or blocked. Changes will be lost if you refresh.');
+    }
   }
 
   // ---------- multiple sessions ----------
@@ -1292,6 +1523,7 @@ const App = (() => {
     el.sessionsToolbar.hidden = count === 0;
     el.sessionsCount.textContent = count;
     el.btnNewSession.hidden = settingUp;
+    el.btnVoice.hidden = !speech || settingUp;
     el.btnToggleAll.hidden = settingUp || count < 2;
     el.btnToggleAll.textContent = [...contexts.values()].some(ctx => ctx.root.open) ? 'Collapse all' : 'Expand all';
     el.btnCancelSetup.hidden = count === 0;
