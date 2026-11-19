@@ -432,7 +432,7 @@ body.footer-in-view .to-top.is-visible { opacity: 0; pointer-events: none; trans
 
 /* =====================================================================
    Dark mode — html[data-theme="dark"], set before first paint by the
-   script in <head> (follows the device setting until the toggle is used)
+   script in <head> (light unless the visitor picked dark with the toggle)
    ===================================================================== */
 html[data-theme="dark"] {
   color-scheme: dark;

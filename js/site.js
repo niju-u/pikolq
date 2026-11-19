@@ -20,8 +20,6 @@
   const root = document.documentElement;
   const themeBtn = document.getElementById('btn-theme');
   const themeMeta = document.querySelector('meta[name="theme-color"]');
-  const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
-  const savedTheme = () => { try { return localStorage.getItem(THEME_KEY); } catch (e) { return null; } };
 
   function applyTheme(theme) {
     const dark = theme === 'dark';
@@ -39,8 +37,6 @@
     applyTheme(next);
     try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* private mode: choice lasts this visit */ }
   });
-  // Follow the device setting until the person picks a theme themselves.
-  systemDark.addEventListener('change', e => { if (!savedTheme()) applyTheme(e.matches ? 'dark' : 'light'); });
 
   // Print / PDF export always uses the light colours.
   let themeBeforePrint = null;
