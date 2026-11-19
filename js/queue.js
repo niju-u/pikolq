@@ -378,6 +378,42 @@ const Queue = (() => {
     return best && { team1: best.team1, team2: best.team2 };
   }
 
+  /**
+   * Not enough rested players: every rested player goes on, plus some who just finished.
+   * Among those tied on games and games-in-a-row, pick for variety instead of by id,
+   * otherwise the same players sit out together (and come back together) every time.
+   * Only used without fixed partners; returns null to fall back to the strict order.
+   */
+  function fillFromTired(rested, tired, perMatch, matchType, byId, currentSeq, rng) {
+    const need = perMatch - rested.length;
+    if (need <= 0 || tired.length < need) return null;
+    if (rested.concat(tired).some(p => activePartnerId(p, byId, matchType) != null)) return null;
+    const rank = p => [rotationGames(p), p.streak || 0];
+    const same = (a, b) => a[0] === b[0] && a[1] === b[1];
+    const cut = rank(tired[need - 1]);
+    const mandatory = tired.filter(p => { const r = rank(p); return r[0] < cut[0] || (r[0] === cut[0] && r[1] < cut[1]); });
+    const pool = tired.filter(p => same(rank(p), cut)).slice(0, POOL_CAP);
+    const left = need - mandatory.length;
+    if (left < 0 || pool.length < left) return null;
+
+    let best = null;
+    const chosen = [];
+    (function search(start) {
+      if (chosen.length === left) {
+        const split = bestSplit(rested.concat(mandatory, chosen), matchType, currentSeq, rng);
+        const key = split.cost + rng() * 0.5;
+        if (!best || key < best.key) best = { team1: split.team1, team2: split.team2, key };
+        return;
+      }
+      for (let k = start; k < pool.length; k++) {
+        chosen.push(pool[k]);
+        search(k + 1);
+        chosen.pop();
+      }
+    })(0);
+    return best && { team1: best.team1, team2: best.team2 };
+  }
+
   /** The match the next free court would get. Used by generateMatch and "Next to play". */
   function planNext(players, busyIds, matchType, currentSeq, manualOrder, seed, options = {}) {
     const perMatch = matchType === 'doubles' ? 4 : 2;
@@ -418,6 +454,8 @@ const Queue = (() => {
     // Not enough rested players: take every rested player, then as few who just played as needed,
     // and newly added players only if that still isn't enough.
     if (rested.length === fullOrder.length) return result(null);
+    const mixed = !hasManualOrder(manualOrder) && fillFromTired(rested, tired, perMatch, matchType, byId, currentSeq, rng);
+    if (mixed) return result(mixed);
     const selected = selectPlayers(waitingOrder, perMatch, matchType, byId);
     if (!selected) return result(null);
     const split = bestSplit(selected, matchType, currentSeq, rng);

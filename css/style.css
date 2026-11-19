@@ -13,6 +13,7 @@
   --lav-100: #E5D8ED;        /* soft lavender: chips, soft buttons */
   --lav-25: #FAF7FC;
   --white: #FFFFFF;
+  --on-fill: #FFFFFF;        /* text on filled (plum, red) buttons and tags */
   --text: #33283B;
   --text-2: #786C82;         /* secondary text */
   --border: #E9E1EC;
@@ -171,7 +172,7 @@ body { padding-top: var(--header-h, 88px); }
   padding: 11px 16px;
   border-radius: var(--r-md);
   background: var(--text);
-  color: var(--white);
+  color: var(--on-fill);
   font-size: 0.88rem;
   font-weight: 600;
   box-shadow: 0 10px 28px rgba(51, 40, 59, 0.3);
@@ -194,7 +195,7 @@ body { padding-top: var(--header-h, 88px); }
   border-radius: 50%;
   border: none;
   background: var(--plum);
-  color: var(--white);
+  color: var(--on-fill);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -519,14 +520,14 @@ main {
 .btn:active:not(:disabled) { transform: scale(0.98); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.btn-primary { background: var(--plum); border-color: var(--plum); color: var(--white); }
+.btn-primary { background: var(--plum); border-color: var(--plum); color: var(--on-fill); }
 .btn-primary:hover:not(:disabled) { background: var(--plum-hover); border-color: var(--plum-hover); }
 
 .btn-secondary { background: var(--white); border-color: var(--border-strong); color: var(--plum); }
 .btn-secondary:hover:not(:disabled) { background: var(--lav-25); border-color: var(--primary); }
 
 .btn-danger { background: var(--error-bg); border-color: var(--error-line); color: var(--error-fg); }
-.btn-danger:hover:not(:disabled) { background: var(--error-fg); border-color: var(--error-fg); color: var(--white); }
+.btn-danger:hover:not(:disabled) { background: var(--error-fg); border-color: var(--error-fg); color: var(--on-fill); }
 
 .btn-danger-ghost { background: var(--white); border-color: var(--error-line); color: var(--error-fg); }
 .btn-danger-ghost:hover:not(:disabled) { background: var(--error-bg); }
@@ -603,7 +604,7 @@ main {
 
 .court-tab {
   background: var(--plum);
-  color: var(--white);
+  color: var(--on-fill);
   font-weight: 800;
   font-size: 0.95rem;
   padding: 9px 20px;
@@ -749,7 +750,7 @@ main {
 .btn-win:hover:not(:disabled) {
   background: var(--plum);
   border-color: var(--plum);
-  color: var(--white);
+  color: var(--on-fill);
 }
 
 .court-decision.is-decided { grid-template-columns: 1fr; gap: 10px; }
@@ -1035,7 +1036,7 @@ main {
   flex-shrink: 0;
 }
 
-.queue-next .queue-num { background: var(--plum); color: var(--white); }
+.queue-next .queue-num { background: var(--plum); color: var(--on-fill); }
 
 .queue-name {
   flex: 1;
@@ -1455,7 +1456,7 @@ main {
   transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
-.segmented-btn.active { background: var(--plum); color: var(--white); box-shadow: var(--shadow-sm); }
+.segmented-btn.active { background: var(--plum); color: var(--on-fill); box-shadow: var(--shadow-sm); }
 
 .calc-preview {
   margin-top: 14px;
@@ -1844,7 +1845,7 @@ main {
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--plum);
-  color: var(--white);
+  color: var(--on-fill);
   font-size: 0.72rem;
   font-weight: 700;
   white-space: nowrap;
@@ -1999,7 +2000,7 @@ main {
 }
 
 .seg-icon .icon { width: 17px; height: 17px; }
-.segmented-btn.active .seg-icon { background: rgba(255, 255, 255, 0.18); color: var(--white); }
+.segmented-btn.active .seg-icon { background: rgba(255, 255, 255, 0.18); color: var(--on-fill); }
 
 .seg-text { display: flex; flex-direction: column; line-height: 1.2; }
 .seg-text strong { font-size: 0.95rem; }
@@ -2110,9 +2111,9 @@ main {
   transition: background 0.2s, color 0.2s;
 }
 
-.player-name-field.is-filled .player-name-index { background: var(--plum); color: var(--white); }
+.player-name-field.is-filled .player-name-index { background: var(--plum); color: var(--on-fill); }
 .player-name-field.is-dup { border-color: var(--error-line); background: var(--error-bg); }
-.player-name-field.is-dup .player-name-index { background: var(--error-fg); color: var(--white); }
+.player-name-field.is-dup .player-name-index { background: var(--error-fg); color: var(--on-fill); }
 
 /* Desktop: settings column (sticky) beside the names */
 @media (min-width: 1024px) {
