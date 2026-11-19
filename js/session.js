@@ -51,6 +51,16 @@ const Session = (() => {
     return id == null ? null : byId.get(id);
   }
 
+  /** In Doubles, a lone player without a fixed partner can never be called when everyone
+   *  else is in a fixed pair (a court needs two pairs, or a pair plus two singles). Returns them, or null. */
+  function strandedPlayer(state) {
+    if (state.config.matchType !== 'doubles') return null;
+    const active = state.players.filter(Queue.isActive);
+    const byId = new Map(state.players.map(p => [p.id, p]));
+    const singles = active.filter(p => Queue.activePartnerId(p, byId, 'doubles') == null);
+    return singles.length === 1 && active.length > 1 ? singles[0] : null;
+  }
+
   // ---------- manual waiting order ----------
 
   /** Remove ids that are no longer waiting; clear the order once it's empty. */
@@ -420,6 +430,7 @@ const Session = (() => {
     locate,
     waitingOrder,
     partnerOf,
+    strandedPlayer,
     pruneOverride,
     moveWaiting,
     resetWaitingOrder,

@@ -1203,6 +1203,12 @@ const App = (() => {
     return el.modalBody.querySelector(selector);
   }
 
+  /** Tell the organizer if a change left one player who can never be called (see Session.strandedPlayer). */
+  function warnStranded() {
+    const p = Session.strandedPlayer(state);
+    if (p) showToast(`${p.name} can’t be called: everyone else has a fixed partner. Add a player or end a fixed pair.`);
+  }
+
   function splitWarning(splits) {
     return splits.map(([a, b]) => `${a.name} & ${b.name}`).join(', ');
   }
@@ -1269,6 +1275,7 @@ const App = (() => {
         const result = Session.updatePlayer(state, p.id, { name: q('#m-name').value, partnerId });
         if (!result.ok) return result.errors;
         commitChange();
+        warnStranded();
         return null;
       },
       onAction: action => {
@@ -1281,6 +1288,7 @@ const App = (() => {
         closeModal();
         commitChange();
         showToast(`${p.name} was removed. Use Restore to bring them back.`);
+        warnStranded();
       },
     });
   }
@@ -1608,7 +1616,8 @@ const App = (() => {
   function startNewSession() {
     closeModal();
     showView('setup');
-    window.scrollTo({ top: 0 });
+    // Go straight to the form: the top of the page is the hero banner.
+    el.setupView.scrollIntoView({ block: 'start' });
   }
 
   function openRenameSessionModal() {
@@ -1977,10 +1986,12 @@ const App = (() => {
       const partner = partnerFor(p);
       return partner && busyIds.has(partner.id) ? partner : null;
     };
+    const stranded = Session.strandedPlayer(state);
     const row = (p, i) => `
       <li class="queue-row${manual.has(p.id) ? ' is-manual' : ''}">
         <span class="queue-num">${i + 1}</span>
         <span class="queue-name">${escapeHtml(p.name)}${partnerBadge(p.id)}</span>
+        ${stranded && stranded.id === p.id ? '<span class="queue-tag tag-partner" title="Everyone else has a fixed partner, so this player can only be called with another player who has none. Add a player or end a fixed pair.">Can’t be called: needs another player without a partner</span>' : ''}
         ${waitsFor(p) ? `<span class="queue-tag tag-partner" title="Fixed partners are called together">Waits for ${escapeHtml(waitsFor(p).name)}</span>` : ''}
         ${manual.has(p.id) ? '<span class="queue-tag">Manual</span>' : ''}
         <span class="queue-move">

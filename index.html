@@ -1,22 +1,49 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="px-ui">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#F3EDF7" />
 <title>Pickleball Open Play</title>
-<link rel="icon" href="img/icons/favicon.ico" sizes="48x48" />
-<link rel="icon" href="img/icons/icon.svg" type="image/svg+xml" />
-<link rel="icon" href="img/icons/favicon-32.png" type="image/png" sizes="32x32" />
-<link rel="apple-touch-icon" href="img/icons/apple-touch-icon.png" />
-<meta name="apple-mobile-web-app-title" content="Pickleball" />
-<link rel="manifest" href="manifest.webmanifest" />
+<meta name="description" content="Run pickleball open play: queue players, rotate courts fairly and record every result." />
+<link rel="icon" href="img/icons/favicon.ico?v=2" sizes="any" />
+<link rel="icon" href="img/icons/favicon.svg?v=2" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="img/icons/apple-touch-icon.png?v=2" />
+<link rel="manifest" href="manifest.webmanifest?v=2" />
+<meta name="apple-mobile-web-app-title" content="Open Play" />
+<meta name="mobile-web-app-capable" content="yes" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
-<link rel="stylesheet" href="css/style.css?v=82" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Pixelify+Sans:wght@500;600;700&family=Silkscreen:wght@400;700&display=swap" />
+<script>
+/* Pick light or dark before the page paints: saved choice first, else the device setting. */
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem('pikolq-theme'); } catch (e) {}
+  var dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+})();
+</script>
+<link rel="stylesheet" href="css/style.css?v=91" />
+<link rel="stylesheet" href="css/pixel.css?v=91" />
 </head>
 <body>
+<script>
+/* If sessions are saved, start in the compact hero so the page doesn't jump when app.js opens them.
+   Same check as storage.js: the session list, a saved session key, or the old single-session key. */
+(function () {
+  try {
+    var list = JSON.parse(localStorage.getItem('pbq_sessions_v1') || 'null');
+    var has = Array.isArray(list) ? list.length > 0 : !!localStorage.getItem('pbq_session_v1');
+    if (!has && !Array.isArray(list)) {
+      for (var i = 0; i < localStorage.length; i++) {
+        if ((localStorage.key(i) || '').indexOf('pbq_s_') === 0) { has = true; break; }
+      }
+    }
+    if (has) document.body.classList.add('is-session');
+  } catch (e) { /* storage blocked: app.js decides once it loads */ }
+})();
+</script>
 <header class="app-header no-print">
   <div class="header-inner">
     <div class="brand">
@@ -35,10 +62,15 @@
         <circle cx="33.4" cy="38" r="1.1" fill="#C9962A" /><circle cx="38.6" cy="38" r="1.1" fill="#C9962A" />
       </svg>
       <div class="brand-text">
-        <h1>Pickleball Open Play</h1>
+        <h1>Pickleball <span>Open Play</span></h1>
         <p class="brand-tagline">Play · Compete · Enjoy!</p>
       </div>
     </div>
+
+    <button type="button" class="theme-toggle no-print" id="btn-theme" aria-pressed="false" aria-label="Dark mode" title="Switch to dark mode">
+      <svg class="tt-sun" viewBox="0 0 16 16" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="6"/><rect x="5" y="6" width="6" height="4"/><rect x="7" y="1" width="2" height="2"/><rect x="7" y="13" width="2" height="2"/><rect x="1" y="7" width="2" height="2"/><rect x="13" y="7" width="2" height="2"/><rect x="3" y="3" width="2" height="2"/><rect x="11" y="3" width="2" height="2"/><rect x="3" y="11" width="2" height="2"/><rect x="11" y="11" width="2" height="2"/></svg>
+      <svg class="tt-moon" viewBox="0 0 16 16" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true"><rect x="5" y="2" width="4" height="2"/><rect x="3" y="4" width="4" height="2"/><rect x="2" y="6" width="4" height="4"/><rect x="3" y="10" width="5" height="2"/><rect x="5" y="12" width="6" height="2"/><rect x="10" y="10" width="4" height="2"/><rect x="12" y="2" width="1" height="1"/><rect x="13" y="5" width="1" height="1"/></svg>
+    </button>
 
     <a class="sponsor" href="https://www.facebook.com/share/19PkqEfUcM/?mibextid=wwXIfr" target="_blank" rel="noopener noreferrer" title="Visit Pickle sa Balay on Facebook" aria-label="Sponsored by Pickle sa Balay. Opens their Facebook page in a new tab">
       <span class="sponsor-label">Sponsored by</span>
@@ -46,6 +78,65 @@
     </a>
   </div>
 </header>
+
+<!-- ================= HERO ================= -->
+<section class="hero-band no-print" aria-labelledby="hero-title">
+  <div class="px-stars" aria-hidden="true">
+    <span class="px-star" style="top:8%;left:18%"></span>
+    <span class="px-star s1" style="top:16%;left:72%;animation-delay:.37s"></span>
+    <span class="px-star s2" style="top:24%;left:40%;animation-delay:.74s"></span>
+    <span class="px-star" style="top:10%;left:90%;animation-delay:1.11s"></span>
+    <span class="px-star s1" style="top:34%;left:6%;animation-delay:1.48s"></span>
+    <span class="px-star s2" style="top:44%;left:62%;animation-delay:1.85s"></span>
+    <span class="px-star" style="top:58%;left:28%;animation-delay:2.22s"></span>
+    <span class="px-star s1" style="top:66%;left:84%;animation-delay:.2s"></span>
+    <span class="px-star s2" style="top:74%;left:12%;animation-delay:.6s"></span>
+    <span class="px-star" style="top:80%;left:52%;animation-delay:1s"></span>
+    <span class="px-star s1" style="top:52%;left:96%;animation-delay:1.4s"></span>
+    <span class="px-star" style="top:4%;left:58%;animation-delay:1.8s"></span>
+  </div>
+  <div class="px-container hero-grid">
+    <div class="hero-content">
+      <span class="px-eyebrow"><span class="px-blink" aria-hidden="true"></span>Play · Compete · Enjoy</span>
+      <h1 id="hero-title"><span class="w" style="--w:0">Fair</span> <span class="w" style="--w:1">games</span> <span class="w" style="--w:2">for</span> <span class="w" style="--w:3">every</span> <span class="w accent" style="--w:4">player.</span></h1>
+      <p class="hero-lead">Queue players, rotate courts and record every result. The app picks who plays next, so everyone gets their turn.</p>
+      <div class="hero-buttons">
+        <a class="btn btn-accent btn-lg" href="#setup-view" id="hero-start"><span data-icon="play"></span>Set up a session</a>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <!-- Pixel-art open play: a doubles rally, with the next players waiting in line -->
+      <svg class="px-court" viewBox="0 0 96 64" shape-rendering="crispEdges" aria-hidden="true" focusable="false">
+        <rect class="pc-drop" x="6" y="50" width="66" height="3" />
+        <rect class="pc-floor" x="4" y="14" width="66" height="36" />
+        <rect class="pc-kitchen" x="27" y="14" width="20" height="36" />
+        <rect class="pc-line" x="4" y="14" width="66" height="1" /><rect class="pc-line" x="4" y="49" width="66" height="1" />
+        <rect class="pc-line" x="4" y="14" width="1" height="36" /><rect class="pc-line" x="69" y="14" width="1" height="36" />
+        <rect class="pc-line" x="27" y="14" width="1" height="36" /><rect class="pc-line" x="46" y="14" width="1" height="36" />
+        <rect class="pc-line" x="4" y="31" width="23" height="1" /><rect class="pc-line" x="47" y="31" width="23" height="1" />
+        <rect class="pc-net" x="36" y="11" width="2" height="41" /><rect class="pc-post" x="36" y="10" width="2" height="2" /><rect class="pc-post" x="36" y="51" width="2" height="2" />
+        <!-- Partners waiting on the back line -->
+        <g class="pc-idle"><rect class="pc-paddle-a" x="14" y="38" width="4" height="5" /><rect class="pc-handle" x="15" y="43" width="2" height="3" /></g>
+        <g class="pc-idle b"><rect class="pc-paddle-b" x="56" y="38" width="4" height="5" /><rect class="pc-handle" x="57" y="43" width="2" height="3" /></g>
+        <g class="pc-shadow"><rect class="pc-drop" x="13" y="34" width="3" height="1" /></g>
+        <g class="pc-paddle pc-left"><rect class="pc-paddle-a" x="8" y="22" width="4" height="5" /><rect class="pc-handle" x="9" y="27" width="2" height="3" /></g>
+        <g class="pc-paddle pc-right"><rect class="pc-paddle-b" x="60" y="22" width="4" height="5" /><rect class="pc-handle" x="61" y="27" width="2" height="3" /></g>
+        <g class="pc-spark pc-spark-l"><rect class="pc-shine" x="13" y="20" width="1" height="1" /><rect class="pc-shine" x="15" y="22" width="1" height="1" /><rect class="pc-shine" x="13" y="28" width="1" height="1" /><rect class="pc-shine" x="15" y="26" width="1" height="1" /></g>
+        <g class="pc-spark pc-spark-r"><rect class="pc-shine" x="58" y="24" width="1" height="1" /><rect class="pc-shine" x="56" y="26" width="1" height="1" /><rect class="pc-shine" x="58" y="32" width="1" height="1" /><rect class="pc-shine" x="56" y="30" width="1" height="1" /></g>
+        <g class="pc-ball"><rect class="pc-gold" x="13" y="24" width="3" height="3" /><rect class="pc-shine" x="13" y="24" width="1" height="1" /></g>
+        <!-- "Next up" sign and the waiting queue -->
+        <rect class="pc-sign" x="76" y="6" width="16" height="6" /><rect class="pc-sign-edge" x="76" y="11" width="16" height="1" />
+        <rect class="pc-gold" x="79" y="8" width="2" height="2" /><rect class="pc-gold" x="83" y="8" width="2" height="2" /><rect class="pc-gold" x="87" y="8" width="2" height="2" />
+        <g class="pc-arrow"><rect class="pc-gold" x="74" y="18" width="1" height="3" /><rect class="pc-gold" x="73" y="19" width="1" height="1" /></g>
+        <g class="pc-q q1"><rect class="pc-head" x="83" y="15" width="2" height="2" /><rect class="pc-body-a" x="82" y="17" width="4" height="5" /></g>
+        <g class="pc-q q2"><rect class="pc-head" x="83" y="24" width="2" height="2" /><rect class="pc-body-b" x="82" y="26" width="4" height="5" /></g>
+        <g class="pc-q q3"><rect class="pc-head" x="83" y="33" width="2" height="2" /><rect class="pc-body-c" x="82" y="35" width="4" height="5" /></g>
+        <g class="pc-q q4"><rect class="pc-head" x="83" y="42" width="2" height="2" /><rect class="pc-body-b" x="82" y="44" width="4" height="5" /></g>
+        <rect class="pc-drop" x="81" y="50" width="7" height="2" />
+      </svg>
+    </div>
+  </div>
+</section>
 
 <div class="app">
   <main>
@@ -317,6 +408,73 @@
   </main>
 </div>
 
+<!-- ================= FOOTER ================= -->
+<footer class="site-footer no-print">
+  <div class="footer-ticker" aria-hidden="true">
+    <div class="footer-ticker-track">
+      <span>Queue</span><span>Rotate</span><span>Serve</span><span>Rally</span><span>Dink</span><span>Play fair</span><span>Enjoy</span>
+      <span>Queue</span><span>Rotate</span><span>Serve</span><span>Rally</span><span>Dink</span><span>Play fair</span><span>Enjoy</span>
+    </div>
+  </div>
+  <div class="px-container">
+    <a class="sister-card" href="#" data-tournaments-link target="_blank" rel="noopener" aria-label="Pickleball Tournaments, opens in a new tab" hidden>
+      <svg class="sister-art" viewBox="0 0 14 14" shape-rendering="crispEdges" aria-hidden="true" focusable="false">
+        <rect class="t-gold" x="3" y="1" width="8" height="1" /><rect class="t-gold" x="3" y="2" width="8" height="4" />
+        <rect class="t-gold" x="4" y="6" width="6" height="1" /><rect class="t-dark" x="5" y="7" width="4" height="1" />
+        <rect class="t-gold" x="1" y="2" width="2" height="1" /><rect class="t-gold" x="1" y="3" width="1" height="2" /><rect class="t-gold" x="2" y="5" width="1" height="1" />
+        <rect class="t-gold" x="11" y="2" width="2" height="1" /><rect class="t-gold" x="12" y="3" width="1" height="2" /><rect class="t-gold" x="11" y="5" width="1" height="1" />
+        <rect class="t-dark" x="6" y="8" width="2" height="2" /><rect class="t-base" x="4" y="10" width="6" height="2" />
+        <rect class="t-shine" x="4" y="2" width="1" height="3" />
+      </svg>
+      <span class="sister-text">
+        <span class="sister-title">Running a tournament?</span>
+        <span class="sister-sub">Build singles and doubles brackets and play from first serve to champion with Pickleball Tournaments.</span>
+      </span>
+      <span class="btn btn-accent sister-btn">Open the brackets<svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg></span>
+    </a>
+
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a class="footer-logo" href="#" data-footer-top aria-label="Pickleball Open Play — back to top">
+          <svg class="footer-mark" viewBox="0 0 48 48" aria-hidden="true">
+            <g transform="rotate(35 20 24)">
+              <rect x="11" y="4" width="18" height="22" rx="6.5" fill="#6F527F" />
+              <rect x="13.5" y="6.5" width="13" height="17" rx="4.4" fill="none" stroke="#A489B8" stroke-width="1.2" />
+              <rect x="18" y="25" width="4" height="4" fill="#5C4369" />
+              <rect x="17" y="28" width="6" height="13" rx="3" fill="#33283B" />
+            </g>
+            <circle cx="36" cy="35.5" r="7.5" fill="#F7D774" stroke="#D9A93A" stroke-width="1" />
+            <circle cx="33.4" cy="33" r="1.1" fill="#C9962A" /><circle cx="38.6" cy="33" r="1.1" fill="#C9962A" />
+            <circle cx="36" cy="35.5" r="1.1" fill="#C9962A" />
+            <circle cx="33.4" cy="38" r="1.1" fill="#C9962A" /><circle cx="38.6" cy="38" r="1.1" fill="#C9962A" />
+          </svg>
+          <span class="footer-title">Pickleball <span>Open Play</span></span>
+        </a>
+        <p>Fair queueing for open play: courts rotate, results are recorded and everyone gets their turn.</p>
+      </div>
+      <nav aria-label="Footer">
+        <h4>Play</h4>
+        <ul>
+          <li><button type="button" data-footer-new>Start a session</button></li>
+          <li class="footer-courts-item"><button type="button" data-footer-courts>Back to the courts</button></li>
+          <li data-tournaments-item hidden><a href="#" data-tournaments-link target="_blank" rel="noopener">Tournaments <span class="ext" aria-hidden="true">↗</span><span class="sr-only">(opens in a new tab)</span></a></li>
+        </ul>
+      </nav>
+      <div>
+        <h4>Sponsor</h4>
+        <a class="footer-sponsor" href="https://www.facebook.com/share/19PkqEfUcM/?mibextid=wwXIfr" target="_blank" rel="noopener noreferrer" aria-label="Sponsored by Pickle sa Balay. Opens their Facebook page in a new tab">
+          <span class="footer-sponsor-label">Sponsored by</span>
+          <img src="img/pickle-sa-balay.webp" alt="Pickle sa Balay" width="640" height="298" loading="lazy" />
+        </a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© <span data-year>2026</span> Pickleball Open Play · Sponsored by Pickle sa Balay</span>
+      <button type="button" class="footer-top" data-footer-top>Back to top <span aria-hidden="true">▲</span></button>
+    </div>
+  </div>
+</footer>
+
 <!-- Pop-up for editing players, swaps and pairings -->
 <dialog id="modal" class="modal no-print" aria-labelledby="modal-title">
   <div class="modal-card">
@@ -339,12 +497,13 @@
 <!-- Short pop-up messages -->
 <div class="toast no-print" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/icons.js?v=82"></script>
-<script src="js/scheduler.js?v=82"></script>
-<script src="js/queue.js?v=82"></script>
-<script src="js/storage.js?v=82"></script>
-<script src="js/session.js?v=82"></script>
-<script src="js/pdf.js?v=82"></script>
-<script src="js/app.js?v=82"></script>
+<script src="js/icons.js?v=91"></script>
+<script src="js/scheduler.js?v=91"></script>
+<script src="js/queue.js?v=91"></script>
+<script src="js/storage.js?v=91"></script>
+<script src="js/session.js?v=91"></script>
+<script src="js/pdf.js?v=91"></script>
+<script src="js/app.js?v=91"></script>
+<script src="js/site.js?v=91"></script>
 </body>
 </html>
