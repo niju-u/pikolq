@@ -4,7 +4,7 @@
 
   // Sister site link. Leave empty until Pickleball Tournaments is live; the links stay hidden
   // in production while it's empty. On local dev hosts (.test / localhost) the Laragon copy is used.
-  const TOURNAMENTS_URL = '';
+  const TOURNAMENTS_URL = 'https://tournament.pikolq.run.place/';
   const DEV_TOURNAMENTS_URL = 'http://pickleballbracket.test/';
 
   const host = location.hostname;
