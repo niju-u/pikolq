@@ -16,16 +16,16 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Pixelify+Sans:wght@500;600;700&family=Silkscreen:wght@400;700&display=swap" />
 <script>
-/* Pick light or dark before the page paints: saved choice first, else the device setting. */
+/* Pick light or dark before the page paints: the saved choice, otherwise light. */
 (function () {
   var saved = null;
   try { saved = localStorage.getItem('pikolq-theme'); } catch (e) {}
-  var dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var dark = saved === 'dark'; // light by default; dark only if the visitor chose it
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 })();
 </script>
-<link rel="stylesheet" href="css/style.css?v=93" />
-<link rel="stylesheet" href="css/pixel.css?v=93" />
+<link rel="stylesheet" href="css/style.css?v=94" />
+<link rel="stylesheet" href="css/pixel.css?v=94" />
 </head>
 <body>
 <script>
@@ -497,13 +497,13 @@
 <!-- Short pop-up messages -->
 <div class="toast no-print" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/icons.js?v=93"></script>
-<script src="js/scheduler.js?v=93"></script>
-<script src="js/queue.js?v=93"></script>
-<script src="js/storage.js?v=93"></script>
-<script src="js/session.js?v=93"></script>
-<script src="js/pdf.js?v=93"></script>
-<script src="js/app.js?v=93"></script>
-<script src="js/site.js?v=93"></script>
+<script src="js/icons.js?v=94"></script>
+<script src="js/scheduler.js?v=94"></script>
+<script src="js/queue.js?v=94"></script>
+<script src="js/storage.js?v=94"></script>
+<script src="js/session.js?v=94"></script>
+<script src="js/pdf.js?v=94"></script>
+<script src="js/app.js?v=94"></script>
+<script src="js/site.js?v=94"></script>
 </body>
 </html>
