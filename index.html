@@ -24,8 +24,8 @@
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 })();
 </script>
-<link rel="stylesheet" href="css/style.css?v=98" />
-<link rel="stylesheet" href="css/pixel.css?v=146" />
+<link rel="stylesheet" href="css/style.css?v=118" />
+<link rel="stylesheet" href="css/pixel.css?v=179" />
 </head>
 <body>
 <script>
@@ -244,9 +244,11 @@
 
     <!-- One copy of this is made for each session -->
     <template id="session-template">
-      <details class="session-block" open>
-        <summary class="session-head">
-          <span class="session-head-chevron" data-icon="chevronDown"></span>
+      <!-- A plain section (not <details>) so the rename button isn't nested inside the open/close control.
+           The arrow is the real open/close button (named by the session name); clicking anywhere else on the bar also toggles it. -->
+      <section class="session-block" open>
+        <div class="session-head" data-el="session-head">
+          <button type="button" class="session-head-chevron" data-el="session-toggle" aria-expanded="true"><span data-icon="chevronDown"></span></button>
           <div class="session-head-main">
             <h2 class="session-head-name" data-el="head-name"></h2>
             <p class="session-head-started" data-el="head-started" hidden></p>
@@ -256,8 +258,8 @@
           <button type="button" class="icon-btn session-head-rename" data-el="btn-rename" title="Rename session" aria-label="Rename session"><span data-icon="pencil"></span></button>
           <!-- Who's on court, shown only while the session is collapsed -->
           <ul class="session-head-playing" data-el="head-playing"></ul>
-        </summary>
-        <div class="view dashboard session-body">
+        </div>
+        <div class="view dashboard session-body" data-el="session-body">
 
           <!-- Watermark, only shown in the PDF -->
           <img class="print-watermark" src="img/pickle-sa-balay-badge.webp" alt="" aria-hidden="true" width="1200" height="1200" />
@@ -285,7 +287,6 @@
               <h2 class="panel-title"><span class="panel-icon" data-icon="play"></span>Currently Playing</h2>
               <div class="panel-head-actions">
                 <button type="button" class="btn btn-secondary btn-sm" data-el="btn-voice-settings" title="Choose the announcer voice for this session" hidden><span data-icon="settings"></span>Voice</button>
-                <button type="button" class="btn btn-secondary btn-sm" data-el="btn-announce-playing" title="Say out loud who is playing on each court" hidden><span data-icon="volume"></span>Announce players</button>
                 <span class="badge badge-success"><span class="badge-dot"></span>Session Active</span>
               </div>
             </div>
@@ -335,12 +336,14 @@
             <!-- Player statistics -->
             <details class="panel details-panel panel-stats" data-el="stats-card" open>
               <summary class="panel-head details-summary">
-                <h2 class="panel-title"><span class="panel-icon" data-icon="chart"></span>Player Statistics</h2>
+                <h2 class="panel-title"><span class="panel-icon" data-icon="chart"></span><span class="panel-title-stack">Player Statistics<button type="button" class="badge badge-neutral panel-subcount panel-pill-btn no-print" data-el="btn-export-stats-pdf"><span data-icon="printer"></span>Export PDF</button></span></h2>
                 <span class="details-toggle"><span class="details-chevron" data-icon="chevronDown"></span></span>
               </summary>
               <div class="details-body">
                 <div class="stats-actions no-print">
-                  <button type="button" class="btn btn-secondary btn-sm" data-el="btn-export-stats-pdf"><span data-icon="printer"></span>Export PDF</button>
+                  <!-- Rank players: most wins first (pressed = ranked) -->
+                  <button type="button" class="btn btn-secondary btn-sm" data-el="btn-rank-stats" aria-pressed="false"><span data-icon="trophy"></span><span data-el="rank-stats-label">Rank players</span></button>                  <!-- Big leaderboard that fills the screen (for a TV or projector): icon only, at the right end of the row -->
+                  <button type="button" class="btn btn-secondary btn-sm stats-fs-open" data-el="btn-stats-fullscreen" title="Full screen" aria-label="Show Player Statistics full screen"><span data-icon="expand"></span></button>
                 </div>
                 <div class="table-wrap">
                   <table class="stats-table" data-el="stats-table">
@@ -357,6 +360,8 @@
                   </table>
                 </div>
                 <div class="stats-cards" data-el="stats-cards"></div>
+                <!-- Ranked: why some players have no rank yet (shown only when that happens) -->
+                <p class="queue-mode stats-rank-note" data-el="stats-rank-note" hidden></p>
               </div>
             </details>
 
@@ -379,12 +384,11 @@
           <!-- Match history (also used for printing) -->
           <details class="panel details-panel panel-history" data-el="history-card" open>
             <summary class="panel-head details-summary">
-              <h2 class="panel-title"><span class="panel-icon" data-icon="clock"></span>Match History</h2>
+              <h2 class="panel-title"><span class="panel-icon" data-icon="clock"></span><span class="panel-title-stack">Match History<button type="button" class="badge badge-neutral panel-subcount panel-pill-btn no-print" data-el="btn-export-pdf"><span data-icon="printer"></span>Export PDF</button></span></h2>
               <span class="details-toggle"><span class="details-chevron" data-icon="chevronDown"></span></span>
             </summary>
             <div class="details-body">
               <div class="history-actions no-print">
-                <button type="button" class="btn btn-secondary btn-sm" data-el="btn-export-pdf"><span data-icon="printer"></span>Export PDF</button>
                 <button type="button" class="btn btn-danger-ghost btn-sm" data-el="btn-clear-history"><span data-icon="trash"></span>Clear History</button>
               </div>
               <div data-el="history-list" class="history-list"></div>
@@ -416,7 +420,7 @@
             <button type="button" class="btn btn-danger" data-el="btn-reset"><span data-icon="trash"></span>Delete Session</button>
           </section>
         </div>
-      </details>
+      </section>
     </template>
   </main>
 </div>
@@ -520,15 +524,38 @@
 <button type="button" class="to-top no-print" id="btn-to-top" aria-label="Back to top" title="Back to top" tabindex="-1"><span data-icon="arrowUp"></span></button>
 
 <!-- Short pop-up messages -->
+<!-- Player Statistics in full screen: a big leaderboard for a TV or projector (filled by app.js) -->
+<div class="stats-fs no-print" id="stats-fs" role="dialog" aria-modal="true" aria-labelledby="stats-fs-title" hidden>
+  <div class="stats-fs-inner">
+    <header class="stats-fs-head">
+      <div class="stats-fs-heading">
+        <p class="stats-fs-session" id="stats-fs-session"></p>
+        <h2 class="stats-fs-title" id="stats-fs-title">Player Statistics</h2>
+        <p class="stats-fs-meta" id="stats-fs-meta"></p>
+      </div>
+      <div class="stats-fs-actions">
+        <button type="button" class="btn btn-secondary" id="stats-fs-rank" aria-pressed="false"></button>
+        <button type="button" class="btn btn-secondary" id="stats-fs-close"><span data-icon="x"></span>Exit full screen</button>
+      </div>
+    </header>
+    <div class="stats-fs-body">
+      <table class="stats-fs-table">
+        <thead><tr id="stats-fs-headrow"></tr></thead>
+        <tbody id="stats-fs-rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <div class="toast no-print" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/icons.js?v=94"></script>
+<script src="js/icons.js?v=95"></script>
 <script src="js/scheduler.js?v=94"></script>
-<script src="js/queue.js?v=94"></script>
-<script src="js/storage.js?v=94"></script>
+<script src="js/queue.js?v=95"></script>
+<script src="js/storage.js?v=95"></script>
 <script src="js/session.js?v=94"></script>
-<script src="js/pdf.js?v=94"></script>
-<script src="js/app.js?v=107"></script>
-<script src="js/site.js?v=100"></script>
+<script src="js/pdf.js?v=97"></script>
+<script src="js/app.js?v=134"></script>
+<script src="js/site.js?v=101"></script>
 </body>
 </html>
