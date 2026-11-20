@@ -292,10 +292,15 @@ const PdfExport = (() => {
    * Player statistics PDF.
    * data = {
    *   sessionName, dateLabel, courts, matchType, matches, hasScores,
-   *   stats: [{ name, games, wins, losses, winRate, winRatePct, ptsFor, ptsAgainst, left, note }],
+   *   stats: [{ name, rank, games, wins, losses, winRate, winRatePct, ptsFor, ptsAgainst, left, note,
+   *             place, slotSize, slotMid }],
+   *   ranked, medals: { 1|2|3: { w, h, rects: [{ x, y, w, h, rgb }] } } (only when ranked),
+   *   rankNote: why some players have no rank yet ('' when everyone is ranked), printed under the table,
    *   sponsorUrl, logoUrl, watermarkUrl
    * }
    * Rows come in the order they should be printed. winRatePct is a number, or null if no games.
+   * Ranked: place = shared place number (null = no games yet), slotSize = rows in that place (0 = continues
+   * the place above), slotMid = another player of the same place follows.
    */
   async function generateStats(data, options = {}) {
     const { doc, W, M, y, docTitle, drawWatermark } = await startDocument(data, 'Pickleball Player Statistics');
@@ -309,19 +314,43 @@ const PdfExport = (() => {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.setTextColor(...MUTED);
-    doc.text(`${data.matches} match${data.matches === 1 ? '' : 'es'} played`, W - M, y, { align: 'right' });
+    const matchesLabel = `${data.matches} match${data.matches === 1 ? '' : 'es'} played`;
+    doc.text(data.ranked ? `${matchesLabel}  ·  Ranked by win rate` : matchesLabel, W - M, y, { align: 'right' });
 
-    const head = ['#', 'Player', 'Games', 'Wins', 'Losses', 'Win Rate'];
+    // Ranked (like the table on screen): a Rank column with the pixel trophy / medals for the top three,
+    // players who share a place share one rank cell, and a dashed line separates them.
+    const ranked = !!data.ranked;
+    const medalFor = s => (ranked && data.medals && s.place >= 1 && s.place <= 3 ? data.medals[s.place] : null);
+    const MEDAL_H = 8;          // mm, height of a drawn medal
+    const head = [ranked ? 'Rank' : '#', 'Player', 'Games', 'Wins', 'Losses', 'Win Rate'];
     if (data.hasScores) head.push('Pts For', 'Pts Against');
     // The player cell is drawn by hand below (name, with when they started/joined/left underneath)
     const body = data.stats.map((s, i) => {
-      const row = [String(i + 1), { content: '', styles: { minCellHeight: s.note ? 10 : 7.5 } }, String(s.games), String(s.wins), String(s.losses), s.winRate];
-      if (data.hasScores) row.push(String(s.ptsFor), String(s.ptsAgainst));
-      return row;
+      const rowHeight = Math.max(s.note ? 10 : 7.5, medalFor(s) && s.slotSize === 1 ? MEDAL_H + 3 : 0);
+      const rest = [{ content: '', styles: { minCellHeight: rowHeight } }, String(s.games), String(s.wins), String(s.losses), s.winRate];
+      if (data.hasScores) rest.push(String(s.ptsFor), String(s.ptsAgainst));
+      if (!ranked) return [s.rank || String(i + 1), ...rest];
+      if (!s.slotSize) return rest; // part of the place above: its rank cell spans this row
+      return [{ content: medalFor(s) ? '' : s.rank, rowSpan: s.slotSize }, ...rest];
     });
+
+    // Draw a medal from its pixels, centred in a cell
+    function drawMedal(art, cell) {
+      const scale = MEDAL_H / art.h;
+      const x0 = cell.x + (cell.width - art.w * scale) / 2;
+      const y0 = cell.y + (cell.height - MEDAL_H) / 2;
+      art.rects.forEach(r => {
+        doc.setFillColor(...r.rgb);
+        // a hair of overlap so neighbouring pixels never show a gap
+        doc.rect(x0 + r.x * scale, y0 + r.y * scale, r.w * scale + 0.03, r.h * scale + 0.03, 'F');
+      });
+    }
 
     const numeric = {};
     for (let c = 2; c < head.length; c++) numeric[c] = { halign: 'right', cellWidth: c >= 6 ? 24 : 18 };
+    const rankColumn = ranked
+      ? { cellWidth: 15, halign: 'center', fontStyle: 'bold', fontSize: 10.5, textColor: PLUM }
+      : { cellWidth: 9, fontStyle: 'bold', textColor: PLUM };
     doc.autoTable({
       startY: y + 2.5,
       head: [head],
@@ -338,15 +367,22 @@ const PdfExport = (() => {
         fontStyle: 'bold', fontSize: 7.5, textColor: MUTED,
         lineColor: TEXT, lineWidth: { bottom: 0.4 },
       },
-      columnStyles: Object.assign({ 0: { cellWidth: 9, fontStyle: 'bold', textColor: PLUM }, 1: { fontStyle: 'bold' } }, numeric),
+      columnStyles: Object.assign({ 0: rankColumn, 1: { fontStyle: 'bold' } }, numeric),
       didParseCell: cell => {
         if (cell.section === 'head') {
           if (cell.column.index >= 2) cell.cell.styles.halign = 'right';
+          if (ranked && cell.column.index === 0) cell.cell.styles.halign = 'center';
           return;
         }
         const s = data.stats[cell.row.index];
         if (!s) return;
         const col = cell.column.index;
+        if (ranked && col === 0 && s.place == null) {
+          cell.cell.styles.textColor = MUTED; // no rank yet: a grey dash
+          cell.cell.styles.fontStyle = 'normal';
+        }
+        // Inside a shared place: no solid line under this player (a dashed one is drawn instead)
+        if (ranked && s.slotMid && col > 0) cell.cell.styles.lineWidth = 0;
         if (col === 5) {
           cell.cell.styles.fontStyle = 'bold';
           cell.cell.styles.textColor = s.winRatePct == null ? MUTED : (s.winRatePct >= 50 ? PLUM : TEXT);
@@ -355,9 +391,23 @@ const PdfExport = (() => {
         }
       },
       didDrawCell: cell => {
-        if (cell.section !== 'body' || cell.column.index !== 1) return;
+        if (cell.section !== 'body') return;
         const s = data.stats[cell.row.index];
         if (!s) return;
+        if (ranked && cell.column.index === 0) {
+          const art = medalFor(s);
+          if (art) drawMedal(art, cell.cell);
+          return;
+        }
+        if (ranked && s.slotMid && cell.column.index > 0) {
+          // Dashed line between players who share a place
+          doc.setDrawColor(...LINE);
+          doc.setLineWidth(0.2);
+          doc.setLineDashPattern([0.8, 0.8], 0);
+          doc.line(cell.cell.x, cell.cell.y + cell.cell.height, cell.cell.x + cell.cell.width, cell.cell.y + cell.cell.height);
+          doc.setLineDashPattern([], 0);
+        }
+        if (cell.column.index !== 1) return;
         const x = cell.cell.x + 1.5;
         const maxWidth = cell.cell.width - 3;
         const fit = (text) => {
@@ -378,6 +428,28 @@ const PdfExport = (() => {
       },
       willDrawPage: drawWatermark,
     });
+
+    // Ranked: the same note as on screen, under the table, when some players have no rank yet
+    if (ranked && data.rankNote) {
+      const textW = W - 2 * M - 6;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      const lines = doc.splitTextToSize(data.rankNote, textW);
+      let noteY = doc.lastAutoTable.finalY + 7;
+      if (noteY + lines.length * 4 > doc.internal.pageSize.getHeight() - M) {
+        doc.addPage();
+        drawWatermark();
+        noteY = M + 6;
+      }
+      // a small clock, like the note's icon on screen
+      doc.setDrawColor(...MUTED);
+      doc.setLineWidth(0.3);
+      doc.circle(M + 1.6, noteY - 1.1, 1.6, 'S');
+      doc.line(M + 1.6, noteY - 1.1, M + 1.6, noteY - 2.1);
+      doc.line(M + 1.6, noteY - 1.1, M + 2.4, noteY - 0.6);
+      doc.setTextColor(...MUTED);
+      doc.text(lines, M + 6, noteY);
+    }
 
     saveDocument(doc, docTitle, options);
     return doc;

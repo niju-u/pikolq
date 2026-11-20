@@ -2,8 +2,8 @@
 (function () {
   'use strict';
 
-  // Sister site link. Leave empty until Pickleball Tournaments is live; the links stay hidden
-  // in production while it's empty. On local dev hosts (.test / localhost) the Laragon copy is used.
+  // Pickleball Tournaments link. If TOURNAMENTS_URL is emptied, the links stay hidden in production
+  // and local dev hosts (.test / localhost) use the Laragon copy instead.
   const TOURNAMENTS_URL = 'https://tournament.pikolq.run.place/';
   const DEV_TOURNAMENTS_URL = 'http://pickleballbracket.test/';
 
@@ -126,12 +126,12 @@
       </g>
       <rect class="pxp-floor" x="2" y="15" width="7" height="1"/>`;
   // Each player is the 12 x 17 sprite scaled into the court (feet on the white line); the right one is mirrored
-  const courtPlayer = (team, x) => `<svg class="cp" x="${x}" y="1.71" width="8.47" height="12" viewBox="0 -1 12 17">${PLAYER}</svg>`;
+  const courtPlayer = x => `<svg class="cp" x="${x}" y="1.71" width="8.47" height="12" viewBox="0 -1 12 17">${PLAYER}</svg>`;
   const COURT = `<svg class="pxf-svg" viewBox="0 0 40 14" shape-rendering="crispEdges">
       <rect class="c-line" x="0" y="13" width="40" height="1"/>
       <rect class="c-net" x="19" y="7" width="2" height="7"/><rect class="c-post" x="19" y="6" width="2" height="1"/>
-      <g class="pxp-team1 cp-l">${courtPlayer('team1', 4)}</g>
-      <g class="pxp-team2 cp-r" transform="translate(36 0) scale(-1 1)">${courtPlayer('team2', 0)}</g>
+      <g class="pxp-team1 cp-l">${courtPlayer(4)}</g>
+      <g class="pxp-team2 cp-r" transform="translate(36 0) scale(-1 1)">${courtPlayer(0)}</g>
       <g class="pr-ball"><svg width="2.4" height="2.4" viewBox="0 0 6 6">${BALL_PIXELS}</svg></g>
     </svg>`;
   document.querySelectorAll('[data-px-fetch]').forEach(stage => {

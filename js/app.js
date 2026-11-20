@@ -61,6 +61,7 @@ const App = (() => {
     // Every collapsible header shows a "Collapse" / "Expand" tooltip that follows its state
     document.addEventListener('toggle', e => { if (e.target.tagName === 'DETAILS') syncCollapseTip(e.target); }, true);
     document.querySelectorAll('details').forEach(syncCollapseTip);
+    keepHeaderInPlaceOnToggle();
     renderVoiceButton();
 
     Storage.migrateLegacy();
@@ -161,7 +162,6 @@ const App = (() => {
       queueCount: get('queue-count'),
       strictRest: get('strict-rest'),
       btnAnnounce: get('btn-announce'),
-      btnAnnouncePlaying: get('btn-announce-playing'),
       btnVoiceSettings: get('btn-voice-settings'),
       statsBody: get('stats-body'),
       statsCards: get('stats-cards'),
@@ -175,6 +175,10 @@ const App = (() => {
       btnAddPlayers: get('btn-add-players'),
       btnExportPdf: get('btn-export-pdf'),
       btnExportStatsPdf: get('btn-export-stats-pdf'),
+      btnRankStats: get('btn-rank-stats'),
+      rankStatsLabel: get('rank-stats-label'),
+      statsRankNote: get('stats-rank-note'),
+      btnStatsFs: get('btn-stats-fullscreen'),
       btnClearHistory: get('btn-clear-history'),
       btnReset: get('btn-reset'),
     });
@@ -182,6 +186,35 @@ const App = (() => {
     [ctx.el.sessionMeta, ctx.el.printPlayerNames, ctx.el.courtsGrid, ctx.el.queueMode, ctx.el.waitingList,
       ctx.el.pmList, ctx.el.statsBody, ctx.el.statsHead, ctx.el.statsCards, ctx.el.historyList,
       ctx.el.headPlaying].forEach(cacheHtml);
+
+    // Open/close: the session block is a <section>, not <details>, so the rename button isn't nested inside
+    // the open/close control. `root.open` behaves like <details>.open (and fires 'toggle') so the rest of the code is unchanged.
+    const toggle = get('session-toggle');
+    const body = get('session-body');
+    body.id = `session-body-${id}`;
+    ctx.el.headName.id = `session-name-${id}`;
+    toggle.setAttribute('aria-controls', body.id);
+    toggle.setAttribute('aria-labelledby', ctx.el.headName.id); // read out as the session name + expanded/collapsed
+    const syncToggle = () => {
+      toggle.setAttribute('aria-expanded', String(root.open));
+      toggle.title = root.open ? 'Collapse' : 'Expand';
+    };
+    Object.defineProperty(root, 'open', {
+      configurable: true,
+      get: () => root.hasAttribute('open'),
+      set: v => {
+        if (!!v === root.hasAttribute('open')) return;
+        root.toggleAttribute('open', !!v);
+        syncToggle();
+        root.dispatchEvent(new Event('toggle'));
+      },
+    });
+    syncToggle();
+    // Clicking anywhere on the bar opens/closes it, except the rename button
+    get('session-head').addEventListener('click', ev => {
+      if (ev.target.closest('[data-el="btn-rename"]')) return;
+      root.open = !root.open;
+    });
 
     // Remember whether each session is expanded on this device
     root.open = Storage.getPref(`open_${id}`, '1') === '1';
@@ -199,6 +232,7 @@ const App = (() => {
 
   function removeSessionFromPage(ctx) {
     if (modal && modal.ctx === ctx) closeModal();
+    if (statsFsCtx === ctx) closeStatsFs();
     ctx.root.remove();
     contexts.delete(ctx.id);
     if (active === ctx) {
@@ -224,12 +258,10 @@ const App = (() => {
 
   function bindSessionEvents(ctx) {
     const e = ctx.el;
-    on(ctx, e.btnRename, 'click', ev => {
-      ev.preventDefault(); // don't also open/close the session
-      openRenameSessionModal();
-    });
+    on(ctx, e.btnRename, 'click', openRenameSessionModal); // the header's click handler skips this button
     on(ctx, e.courtsGrid, 'click', onCourtsGridClick);
     on(ctx, e.courtsGrid, 'input', onCourtsGridInput);
+    on(ctx, e.courtsGrid, 'keydown', onTeamPickKey);
     on(ctx, e.waitingList, 'click', onWaitingListClick);
     on(ctx, e.strictRest, 'change', () => {
       state.strictRest = e.strictRest.checked;
@@ -245,8 +277,6 @@ const App = (() => {
     });
     e.btnAnnounce.hidden = !speech;
     on(ctx, e.btnAnnounce, 'click', announceNextUp);
-    e.btnAnnouncePlaying.hidden = !speech;
-    on(ctx, e.btnAnnouncePlaying, 'click', announcePlaying);
     e.btnVoiceSettings.hidden = !speech;
     on(ctx, e.btnVoiceSettings, 'click', openVoiceModal);
     on(ctx, e.pmList, 'click', ev => {
@@ -264,11 +294,40 @@ const App = (() => {
     });
     on(ctx, e.btnExportPdf, 'click', exportPdf);
     on(ctx, e.btnExportStatsPdf, 'click', exportStatsPdf);
+    on(ctx, e.btnRankStats, 'click', toggleStatsRank);
+    e.statsBody.addEventListener('mouseover', highlightRankSlot);
+    e.statsBody.addEventListener('mouseleave', highlightRankSlot);
+    on(ctx, e.btnStatsFs, 'click', openStatsFs);
     on(ctx, e.btnClearHistory, 'click', onClearHistory);
     on(ctx, e.btnReset, 'click', onResetSession);
   }
 
   /** Tooltip on a collapsible's arrow only: "Collapse" while open, "Expand" while closed. */
+  /** Opening or closing a panel keeps its header exactly where it was clicked.
+   *  Scroll anchoring is off (html { overflow-anchor: none }) and the stat, player and history cards
+   *  use estimated heights until they're drawn, so without this the page could shift by a lot
+   *  (even to the bottom) when a long panel like Player Statistics collapses. */
+  function keepHeaderInPlaceOnToggle() {
+    let anchor = null; // { head, top, at }
+    document.addEventListener('click', e => {
+      const head = e.target.closest('summary, [data-el="session-head"]');
+      anchor = head ? { head, top: head.getBoundingClientRect().top, at: performance.now() } : null;
+    }, true);
+    document.addEventListener('toggle', e => {
+      // Only the panel that was just clicked (not a toggle from code, or a stale click like Export PDF)
+      if (!anchor || performance.now() - anchor.at > 1000 || !e.target.contains(anchor.head)) return;
+      const { head, top } = anchor;
+      anchor = null;
+      const settle = () => {
+        const shift = head.getBoundingClientRect().top - top;
+        if (Math.abs(shift) > 1) window.scrollBy({ top: shift, behavior: 'instant' });
+      };
+      // Now, and again after the cards around it have been drawn at their real height
+      settle();
+      requestAnimationFrame(() => { settle(); requestAnimationFrame(settle); });
+    }, true);
+  }
+
   function syncCollapseTip(details) {
     const summary = details.querySelector(':scope > summary');
     const arrow = summary && summary.querySelector(':scope > .session-head-chevron, :scope > .details-toggle > .details-chevron');
@@ -399,6 +458,13 @@ const App = (() => {
   }
 
   function cacheEls() {
+    el.statsFs = document.getElementById('stats-fs');
+    el.statsFsSession = document.getElementById('stats-fs-session');
+    el.statsFsMeta = document.getElementById('stats-fs-meta');
+    el.statsFsRank = document.getElementById('stats-fs-rank');
+    el.statsFsClose = document.getElementById('stats-fs-close');
+    el.statsFsHeadRow = document.getElementById('stats-fs-headrow');
+    el.statsFsRows = document.getElementById('stats-fs-rows');
     el.setupView = document.getElementById('setup-view');
     el.sessionsList = document.getElementById('sessions-list');
     el.sessionTemplate = document.getElementById('session-template');
@@ -437,6 +503,26 @@ const App = (() => {
   }
 
   function bindEvents() {
+    // Full-screen statistics
+    el.statsFsClose.addEventListener('click', closeStatsFs);
+    el.statsFsRank.addEventListener('click', () => {
+      if (!statsFsCtx) return;
+      activate(statsFsCtx);
+      toggleStatsRank();
+    });
+    document.addEventListener('fullscreenchange', () => {
+      if (document.fullscreenElement === el.statsFs) statsFsNative = true;
+      else if (statsFsNative) { statsFsNative = false; closeStatsFs(); } // Esc / the browser's own exit also closes the view
+    });
+    el.statsFs.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.preventDefault(); closeStatsFs(); return; }
+      if (e.key !== 'Tab') return;
+      // Keep keyboard focus inside the full-screen view
+      const items = [el.statsFsRank, el.statsFsClose];
+      const i = items.indexOf(document.activeElement);
+      e.preventDefault();
+      items[(i + (e.shiftKey ? items.length - 1 : 1)) % items.length].focus();
+    });
     el.btnNewSession.addEventListener('click', startNewSession);
     el.btnVoice.addEventListener('click', toggleVoice);
     el.btnCancelSetup.addEventListener('click', () => pixelWipe(() => showView('sessions')));
@@ -853,6 +939,8 @@ const App = (() => {
       onCompleteMatch(court);
     } else if (action === 'open-swap') {
       openSwapModal(court);
+    } else if (action === 'announce-court') {
+      announceCourt(court);
     } else if (action === 'open-pairing') {
       openPairingModal(court);
     }
@@ -868,6 +956,18 @@ const App = (() => {
     if (input.dataset.team === 'team1') court.activeMatch.team1ScoreInput = input.value;
     else court.activeMatch.team2ScoreInput = input.value;
     persist();
+  }
+
+  /** Team boxes act as buttons: Enter or Space picks that team, and focus stays on it after the redraw. */
+  function onTeamPickKey(e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const box = e.target.closest('.team-pick');
+    if (!box || box !== e.target) return;
+    e.preventDefault();
+    const { courtId, team } = box.dataset;
+    box.click();
+    const again = el.courtsGrid.querySelector(`.team-pick[data-court-id="${courtId}"][data-team="${team}"]`);
+    if (again) again.focus();
   }
 
   function selectWinner(court, team) {
@@ -1064,20 +1164,18 @@ const App = (() => {
     speakLines([{ text }], true);
   }
 
-  /** Say who is playing on each court right now. Works even when Voice is off, since it's an explicit tap. */
-  function announcePlaying() {
-    if (!speech) return;
+  /** "Court 2: Ana and Ben, versus Cara and Dan." */
+  function courtLine(c) {
     const side = ids => joinNames(ids.map(playerName));
-    const lines = state.courts
-      .filter(c => c.activeMatch)
-      .map(c => ({ text: `Court ${c.id}: ${side(c.activeMatch.team1)}, versus ${side(c.activeMatch.team2)}.`, pause: 500 }));
-    if (!lines.length) {
-      showToast('No matches are in progress.');
-      return;
-    }
-    lines.unshift({ text: 'Currently playing.', pause: 400 });
-    speakLines(lines, true);
+    return { text: `Court ${c.id}: ${side(c.activeMatch.team1)}, versus ${side(c.activeMatch.team2)}.`, pause: 500 };
   }
+
+  /** Say who is playing on one court (its own Announce Players button). Works even when Voice is off. */
+  function announceCourt(court) {
+    if (!speech || !court.activeMatch) return;
+    speakLines([{ text: 'Currently playing.', pause: 400 }, courtLine(court)], true);
+  }
+
 
   /** Pick this session's announcer voice, with a Test button. Saved on this device only. */
   function openVoiceModal() {
@@ -1794,10 +1892,6 @@ const App = (() => {
     return p ? p.name : '?';
   }
 
-  function teamNames(ids) {
-    return ids.map(playerName).join(' + ');
-  }
-
   /** Name used at match time, plus the current name if it changed. */
   function historyNames(ids, snapshot) {
     return ids.map((id, i) => {
@@ -1960,13 +2054,18 @@ const App = (() => {
     return `<div class="pxp-row pxp-${team}" aria-hidden="true">${Array.from({ length: count }, (_, i) => `<span class="pxp-slot" style="--pxp-i:${i}">${PX_PLAYER}</span>`).join('')}</div>`;
   }
 
-  function renderTeam(ids, team, m, isDoubles) {
+  /** A team on a court card. Tapping it picks that team as the winner (or switches the winner to it). */
+  function renderTeam(ids, team, m, isDoubles, courtId) {
     const fixed = isDoubles && isFixedPairTeam(ids);
     const isWinner = m.winner === team;
     const isLoser = !!m.winner && !isWinner;
     const label = team === 'team1' ? 'Team 1' : 'Team 2';
+    const names = joinNames(ids.map(playerName));
+    const tip = isWinner ? `${label} is the winner` : (m.winner ? `Change the winner to ${label}` : `Tap if ${label} won`);
     return `
-      <div class="team-box is-${team}${isWinner ? ' is-winner' : ''}${isLoser ? ' is-loser' : ''}">
+      <div class="team-box team-pick is-${team}${isWinner ? ' is-winner' : ''}${isLoser ? ' is-loser' : ''}"
+        role="button" tabindex="0" data-action="select-winner" data-court-id="${courtId}" data-team="${team}"
+        aria-pressed="${isWinner}" aria-label="${escapeHtml(`${label} wins: ${names}`)}" title="${tip}">
         <div class="team-label">
           <span>${label}</span>
           ${fixed ? `<span class="pair-tag" title="Fixed partners">${Icons.svg('link')}Fixed pair</span>` : ''}
@@ -2002,26 +2101,29 @@ const App = (() => {
     const isDoubles = state.config.matchType === 'doubles';
     const hasWinner = !!m.winner;
     const status = hasWinner
-      ? `<span class="badge badge-success">${Icons.svg('check')}Winner selected</span>`
+      ? `<span class="badge badge-success">${Icons.svg('check')}Winner<span class="court-label-more">&nbsp;selected</span></span>`
       : '<span class="badge badge-warning"><span class="badge-dot"></span>In Progress</span>';
     const adjusted = m.manual
       ? '<span class="badge badge-plum" title="Players or pairings were changed by the organizer">Adjusted</span>'
       : '';
 
+    // Announce Players sits above the teams: full width on phones, on the right of the hint row on PC (see CSS)
+    const announce = speech
+      ? `<button type="button" class="btn btn-secondary btn-tool court-announce-top" data-action="announce-court" data-court-id="${court.id}" title="Say out loud who is playing on Court ${court.id}">${Icons.svg('volume')}Announce Players</button>`
+      : '';
     const teams = `
+      ${announce}
       <div class="court-teams">
-        ${renderTeam(m.team1, 'team1', m, isDoubles)}
+        ${renderTeam(m.team1, 'team1', m, isDoubles, court.id)}
         <div class="vs-badge" aria-label="versus">VS</div>
-        ${renderTeam(m.team2, 'team2', m, isDoubles)}
+        ${renderTeam(m.team2, 'team2', m, isDoubles, court.id)}
       </div>`;
 
     let decision;
     if (!hasWinner) {
       decision = `
-        <div class="court-decision">
-          <span class="decision-label">Who won?</span>
-          <button type="button" class="btn btn-win" data-action="select-winner" data-court-id="${court.id}" data-team="team1">${Icons.svg('trophy')}Team 1 Wins</button>
-          <button type="button" class="btn btn-win" data-action="select-winner" data-court-id="${court.id}" data-team="team2">${Icons.svg('trophy')}Team 2 Wins</button>
+        <div class="court-decision is-hint">
+          <span class="decision-label">Who won? Tap the winning team</span>
         </div>`;
     } else {
       const winnerLabel = m.winner === 'team1' ? 'Team 1' : 'Team 2';
@@ -2195,22 +2297,169 @@ const App = (() => {
     return `<span class="rate ${pct >= 50 ? 'rate-high' : 'rate-low'}">${pct}%</span>`;
   }
 
-  /** Everyone who played (including players who left), most games first. Used by the table and the PDF. */
-  function statsPlayers() {
-    return state.players
-      .slice()
-      .sort((a, b) => b.gamesPlayed - a.gamesPlayed || a.name.localeCompare(b.name));
+  // ---- statistics ranking ----
+  // The win % exactly as the table shows it (rounded), so players showing the same % share a rank
+  const winPctOf = p => (p.gamesPlayed > 0 ? Math.round((p.wins / p.gamesPlayed) * 100) : -1);
+  // Games count too: players who've played fewer than half as many games as whoever has played the most
+  // are still ranked, but after everyone else (so 1 win from 1 game can't top someone who won 7 of 10).
+  const RANK_MIN_SHARE = 0.5;
+
+  /** Fewest games needed to be ranked with everyone else (fewer = ranked at the bottom). */
+  function rankMinGames(players = state.players) {
+    const most = players.reduce((m, p) => Math.max(m, p.gamesPlayed), 0);
+    return Math.max(1, Math.ceil(most * RANK_MIN_SHARE));
   }
+
+  /** 0 = enough games, 1 = fewer games (ranked at the bottom), 2 = no games yet (no rank). */
+  const rankTier = (p, minGames) => (p.gamesPlayed >= minGames ? 0 : p.gamesPlayed > 0 ? 1 : 2);
+
+  /** Rank: best win % first (the same % shares a rank). Players with fewer games come after everyone else,
+   *  ranked the same way among themselves; players with no games go last, unranked. */
+  function compareRank(a, b, minGames) {
+    const ta = rankTier(a, minGames);
+    const tb = rankTier(b, minGames);
+    return ta - tb || (ta < 2 ? winPctOf(b) - winPctOf(a) : 0);
+  }
+
+  /** Order inside a shared rank: more games, then more wins, then name.
+   *  Only what the table shows is used (no hidden point difference). */
+  function compareWithinRank(a, b) {
+    return b.gamesPlayed - a.gamesPlayed || b.wins - a.wins || a.name.localeCompare(b.name);
+  }
+
+  /** The note under a ranked list when some players have fewer games, or ''. Plain words on purpose. */
+  function rankNote(players = state.players) {
+    const minGames = rankMinGames(players);
+    if (!players.some(p => rankTier(p, minGames) === 1)) return '';
+    return `Players who have played fewer than ${minGames} games are ranked at the bottom until they play more.`;
+  }
+
+  /** "Rank players" is remembered per session on this device. */
+  function isStatsRanked() {
+    return !!active && Storage.getPref(`rank_${active.id}`, '0') === '1';
+  }
+
+  /** Ranked table: hovering any player in a shared place highlights the whole place
+   *  (every row in it and the medal cell, which only belongs to the first row). */
+  function highlightRankSlot(e) {
+    const body = e.currentTarget;
+    const row = e.type === 'mouseover' ? e.target.closest('tr') : null;
+    let first = row;
+    while (first && first.classList.contains('rank-cont') && first.previousElementSibling) first = first.previousElementSibling;
+    const slot = [];
+    for (let r = first; r && (r === first || r.classList.contains('rank-cont')); r = r.nextElementSibling) slot.push(r);
+    body.querySelectorAll('tr.is-slot-hover').forEach(r => { if (!slot.includes(r)) r.classList.remove('is-slot-hover'); });
+    if (body.parentElement.classList.contains('is-ranked')) slot.forEach(r => r.classList.add('is-slot-hover'));
+  }
+
+  function toggleStatsRank() {
+    if (!active) return;
+    Storage.setPref(`rank_${active.id}`, isStatsRanked() ? '0' : '1');
+    renderStats();
+  }
+
+  /** Everyone who played (including players who left): ranked, or most games first. Used by the table, full screen and the PDF. */
+  function statsPlayers() {
+    const list = state.players.slice();
+    if (isStatsRanked()) {
+      const minGames = rankMinGames(list);
+      return list.sort((a, b) => compareRank(a, b, minGames) || compareWithinRank(a, b));
+    }
+    return list.sort((a, b) => b.gamesPlayed - a.gamesPlayed || a.name.localeCompare(b.name));
+  }
+
+  /** Rank numbers for a ranked list. Players with the same win % share a place and the next place follows on
+   *  (1, 2, 2, 3, 3, 3, 4). Players with fewer games carry on the numbering after everyone else.
+   *  No rank until a player has played. */
+  function statsRanks(players) {
+    const minGames = rankMinGames(players);
+    const ranks = [];
+    let place = 0;
+    players.forEach((p, i) => {
+      if (rankTier(p, minGames) === 2) { ranks.push(null); return; }
+      if (!(i > 0 && ranks[i - 1] != null && compareRank(players[i - 1], p, minGames) === 0)) place += 1;
+      ranks.push(place);
+    });
+    return ranks;
+  }
+
+  /** Players who share a place are drawn in one slot: span[i] = how many rows start at i (0 = part of the slot above). */
+  function rankSpans(ranks) {
+    const span = ranks.map(() => 0);
+    for (let i = 0; i < ranks.length;) {
+      if (ranks[i] == null) { span[i] = 1; i += 1; continue; } // unranked players each get their own row
+      let j = i;
+      while (j + 1 < ranks.length && ranks[j + 1] === ranks[i]) j++;
+      span[i] = j - i + 1;
+      i = j + 1;
+    }
+    return span;
+  }
+
+  /** Row classes for a ranked list: medal tint for the top three, and where a shared slot starts, continues and ends. */
+  function rankRowClass(ranks, span, i) {
+    const r = ranks[i];
+    const cls = [];
+    if (r != null && r <= 3) cls.push('is-top', `is-top-${r}`);
+    if (!span[i]) cls.push('rank-cont');                                   // not the first player in its slot
+    if (i + 1 < ranks.length && !span[i + 1]) cls.push('rank-mid');        // not the last player in its slot
+    return cls.length ? ` class="${cls.join(' ')}"` : '';
+  }
+
+  // Pixel art for the top three: 1st is a gold trophy; 2nd and 3rd are silver and bronze medals on a red neck ribbon
+  // 1st: a gold pixel trophy with a slim dark-purple 1
+  const PX_GOLD = `<svg class="rank-medal-art rank-gold-art" viewBox="0 0 14 15" shape-rendering="crispEdges" aria-hidden="true" focusable="false"><rect class="t-line" x="2" y="0" width="10" height="1"/><rect class="t-line" x="0" y="1" width="3" height="1"/><rect class="t-light" x="3" y="1" width="2" height="1"/><rect class="t-gold" x="5" y="1" width="5" height="1"/><rect class="t-dark" x="10" y="1" width="1" height="1"/><rect class="t-line" x="11" y="1" width="3" height="1"/><rect class="t-line" x="0" y="2" width="1" height="1"/><rect class="t-gold" x="1" y="2" width="1" height="1"/><rect class="t-line" x="2" y="2" width="1" height="1"/><rect class="t-light" x="3" y="2" width="1" height="1"/><rect class="t-gold" x="4" y="2" width="2" height="1"/><rect class="t-gold" x="6" y="2" width="1" height="1"/><rect class="t-num" x="7" y="2" width="1" height="1"/><rect class="t-gold" x="8" y="2" width="2" height="1"/><rect class="t-dark" x="10" y="2" width="1" height="1"/><rect class="t-line" x="11" y="2" width="1" height="1"/><rect class="t-gold" x="12" y="2" width="1" height="1"/><rect class="t-line" x="13" y="2" width="1" height="1"/><rect class="t-line" x="0" y="3" width="1" height="1"/><rect class="t-gold" x="1" y="3" width="1" height="1"/><rect class="t-line" x="2" y="3" width="1" height="1"/><rect class="t-light" x="3" y="3" width="1" height="1"/><rect class="t-gold" x="4" y="3" width="1" height="1"/><rect class="t-gold" x="5" y="3" width="1" height="1"/><rect class="t-num" x="6" y="3" width="2" height="1"/><rect class="t-gold" x="8" y="3" width="2" height="1"/><rect class="t-dark" x="10" y="3" width="1" height="1"/><rect class="t-line" x="11" y="3" width="1" height="1"/><rect class="t-gold" x="12" y="3" width="1" height="1"/><rect class="t-line" x="13" y="3" width="1" height="1"/><rect class="t-line" x="0" y="4" width="1" height="1"/><rect class="t-gold" x="1" y="4" width="1" height="1"/><rect class="t-line" x="2" y="4" width="1" height="1"/><rect class="t-light" x="3" y="4" width="1" height="1"/><rect class="t-gold" x="4" y="4" width="2" height="1"/><rect class="t-gold" x="6" y="4" width="1" height="1"/><rect class="t-num" x="7" y="4" width="1" height="1"/><rect class="t-shadow" x="8" y="4" width="1" height="1"/><rect class="t-gold" x="9" y="4" width="1" height="1"/><rect class="t-dark" x="10" y="4" width="1" height="1"/><rect class="t-line" x="11" y="4" width="1" height="1"/><rect class="t-gold" x="12" y="4" width="1" height="1"/><rect class="t-line" x="13" y="4" width="1" height="1"/><rect class="t-line" x="0" y="5" width="3" height="1"/><rect class="t-light" x="3" y="5" width="1" height="1"/><rect class="t-gold" x="4" y="5" width="2" height="1"/><rect class="t-gold" x="6" y="5" width="1" height="1"/><rect class="t-num" x="7" y="5" width="1" height="1"/><rect class="t-shadow" x="8" y="5" width="1" height="1"/><rect class="t-gold" x="9" y="5" width="1" height="1"/><rect class="t-dark" x="10" y="5" width="1" height="1"/><rect class="t-line" x="11" y="5" width="3" height="1"/><rect class="t-line" x="1" y="6" width="2" height="1"/><rect class="t-light" x="3" y="6" width="1" height="1"/><rect class="t-gold" x="4" y="6" width="1" height="1"/><rect class="t-gold" x="5" y="6" width="1" height="1"/><rect class="t-num" x="6" y="6" width="3" height="1"/><rect class="t-shadow" x="9" y="6" width="1" height="1"/><rect class="t-dark" x="10" y="6" width="1" height="1"/><rect class="t-line" x="11" y="6" width="2" height="1"/><rect class="t-line" x="2" y="7" width="1" height="1"/><rect class="t-light" x="3" y="7" width="1" height="1"/><rect class="t-gold" x="4" y="7" width="5" height="1"/><rect class="t-shadow" x="9" y="7" width="1" height="1"/><rect class="t-dark" x="10" y="7" width="1" height="1"/><rect class="t-line" x="11" y="7" width="1" height="1"/><rect class="t-line" x="3" y="8" width="1" height="1"/><rect class="t-gold" x="4" y="8" width="5" height="1"/><rect class="t-dark" x="9" y="8" width="1" height="1"/><rect class="t-line" x="10" y="8" width="1" height="1"/><rect class="t-line" x="4" y="9" width="1" height="1"/><rect class="t-gold" x="5" y="9" width="3" height="1"/><rect class="t-dark" x="8" y="9" width="1" height="1"/><rect class="t-line" x="9" y="9" width="1" height="1"/><rect class="t-line" x="5" y="10" width="1" height="1"/><rect class="t-gold" x="6" y="10" width="1" height="1"/><rect class="t-dark" x="7" y="10" width="1" height="1"/><rect class="t-line" x="8" y="10" width="1" height="1"/><rect class="t-line" x="5" y="11" width="1" height="1"/><rect class="t-gold" x="6" y="11" width="1" height="1"/><rect class="t-dark" x="7" y="11" width="1" height="1"/><rect class="t-line" x="8" y="11" width="1" height="1"/><rect class="t-line" x="3" y="12" width="2" height="1"/><rect class="t-light" x="5" y="12" width="1" height="1"/><rect class="t-gold" x="6" y="12" width="2" height="1"/><rect class="t-dark" x="8" y="12" width="1" height="1"/><rect class="t-line" x="9" y="12" width="2" height="1"/><rect class="t-line" x="3" y="13" width="1" height="1"/><rect class="t-light" x="4" y="13" width="1" height="1"/><rect class="t-gold" x="5" y="13" width="4" height="1"/><rect class="t-dark" x="9" y="13" width="1" height="1"/><rect class="t-line" x="10" y="13" width="1" height="1"/><rect class="t-line" x="3" y="14" width="8" height="1"/></svg>`;
+  // Medal digits, drawn as 3 x 5 pixels so they stay crisp at any size
+  const MEDAL_DIGITS = { 2: ['111', '001', '111', '100', '111'], 3: ['111', '001', '111', '001', '111'] };
+  const pxMedal = n => {
+    const digit = MEDAL_DIGITS[n].map((row, y) => [...row].map((on, x) => (on === '1'
+      ? `<rect class="md-digit" x="${5 + x}" y="${9 + y}" width="1" height="1"/>` : '')).join('')).join('');
+    return `<svg class="rank-medal-art" viewBox="0 0 13 17" shape-rendering="crispEdges" aria-hidden="true" focusable="false">
+      <rect class="md-ribbon" x="2" y="0" width="2" height="1"/><rect class="md-ribbon" x="3" y="1" width="2" height="1"/><rect class="md-ribbon" x="4" y="2" width="2" height="1"/>
+      <rect class="md-ribbon2" x="9" y="0" width="2" height="1"/><rect class="md-ribbon2" x="8" y="1" width="2" height="1"/><rect class="md-ribbon2" x="7" y="2" width="2" height="1"/>
+      <rect class="md-ribbon" x="5" y="3" width="1" height="1"/><rect class="md-ribbon2" x="6" y="3" width="2" height="1"/>
+      <rect class="md-clasp" x="5" y="4" width="3" height="2"/>
+      <rect class="md-edge" x="4" y="6" width="5" height="1"/><rect class="md-edge" x="2" y="7" width="9" height="1"/><rect class="md-edge" x="1" y="8" width="11" height="7"/>
+      <rect class="md-edge" x="2" y="15" width="9" height="1"/><rect class="md-edge" x="4" y="16" width="5" height="1"/>
+      <rect class="md-metal" x="4" y="7" width="5" height="1"/><rect class="md-metal" x="2" y="8" width="9" height="7"/><rect class="md-metal" x="4" y="15" width="5" height="1"/>
+      <rect class="md-light" x="4" y="8" width="2" height="1"/><rect class="md-light" x="3" y="9" width="1" height="2"/>
+      <rect class="md-shade" x="10" y="11" width="1" height="3"/><rect class="md-shade" x="6" y="15" width="3" height="1"/>
+      ${digit}</svg>`;
+  };
+  const RANK_NAMES = { 1: '1st place', 2: '2nd place', 3: '3rd place' };
+  const rankBadge = r => (r == null
+    ? '<span class="rank-num rank-none" aria-label="No rank yet">—</span>'
+    : r === 1
+      ? `<span class="rank-medal rank-medal-1" title="${RANK_NAMES[1]}">${PX_GOLD}<span class="sr-only">1</span></span>`
+      : r <= 3
+        ? `<span class="rank-medal rank-medal-${r}" title="${RANK_NAMES[r]}">${pxMedal(r)}<span class="sr-only">${r}</span></span>`
+        : `<span class="rank-num">${r}</span>`);
+  const RANK_TIP_ON = 'Ranked by win rate (the same % shares a rank). Click to go back to most games first.';
+  const RANK_TIP_OFF = 'Rank players by win rate';
 
   function renderStats() {
     const anyScores = state.players.some(p => p.scoredGames > 0);
     const players = statsPlayers();
+    const ranked = isStatsRanked();
+    const ranks = ranked ? statsRanks(players) : [];
+    const span = ranked ? rankSpans(ranks) : [];
     const removedTag = p => (Queue.isActive(p) ? '' : ` <span class="muted-tag">left${p.leftAt ? ` ${escapeHtml(p.leftAt)}` : ''}</span>`);
     const pts = (p, key) => (p.scoredGames > 0 ? p[key] : '—');
 
-    // Desktop/tablet table
-    el.statsBody.html = players.map(p => `
-      <tr>
+    // The Rank button is pressed while the list is ranked
+    el.btnRankStats.setAttribute('aria-pressed', ranked ? 'true' : 'false');
+    el.btnRankStats.title = ranked ? RANK_TIP_ON : RANK_TIP_OFF;
+    el.rankStatsLabel.textContent = ranked ? 'Ranked' : 'Rank players';
+    el.statsBody.parentElement.classList.toggle('is-ranked', ranked);
+    // Ranked: explain why some players have no rank yet (only when that happens)
+    const note = ranked ? rankNote(players) : '';
+    el.statsRankNote.hidden = !note;
+    el.statsRankNote.innerHTML = note ? `${Icons.svg('clock')}<span>${escapeHtml(note)}</span>` : '';
+
+    // Desktop/tablet table. While ranked, a Rank column comes first and players who share a place share one rank cell.
+    el.statsBody.html = players.map((p, i) => `
+      <tr${ranked ? rankRowClass(ranks, span, i) : ''}>
+        ${ranked && span[i] ? `<td class="num rank-cell"${span[i] > 1 ? ` rowspan="${span[i]}"` : ''}>${rankBadge(ranks[i])}</td>` : ''}
         <td class="player-name-cell">${escapeHtml(p.name)}${removedTag(p)}</td>
         <td class="num">${p.gamesPlayed}</td>
         <td class="num">${p.wins}</td>
@@ -2220,12 +2469,10 @@ const App = (() => {
       </tr>`).join('');
     const extraHeaders = anyScores ? '<th class="num">Pts For</th><th class="num">Pts Against</th>' : '';
     el.statsHead.html =
-      `<th>Player</th><th class="num">Games</th><th class="num">Wins</th><th class="num">Losses</th><th class="num">Win Rate</th>${extraHeaders}`;
+      `${ranked ? '<th class="num rank-col">Rank</th>' : ''}<th>Player</th><th class="num">Games</th><th class="num">Wins</th><th class="num">Losses</th><th class="num">Win Rate</th>${extraHeaders}`;
 
     // Phone cards: main numbers first, points in an expandable row
-    el.statsCards.html = players.map(p => `
-      <article class="stat-card">
-        <div class="stat-card-name">${escapeHtml(p.name)}${removedTag(p)}</div>
+    const playerBody = p => `
         <dl class="stat-grid">
           <div><dt>Games</dt><dd>${p.gamesPlayed}</dd></div>
           <div><dt>Wins</dt><dd>${p.wins}</dd></div>
@@ -2239,8 +2486,94 @@ const App = (() => {
               <div><dt>Pts for</dt><dd>${pts(p, 'pointsScored')}</dd></div>
               <div><dt>Pts against</dt><dd>${pts(p, 'pointsAgainst')}</dd></div>
             </dl>
-          </details>` : ''}
+          </details>` : ''}`;
+    if (!ranked) {
+      el.statsCards.html = players.map(p => `
+      <article class="stat-card">
+        <div class="stat-card-name">${escapeHtml(p.name)}${removedTag(p)}</div>${playerBody(p)}
       </article>`).join('');
+    } else {
+      // One card per place: the medal or number once, then every player who shares that place
+      el.statsCards.html = players.map((p, i) => {
+        if (!span[i]) return '';
+        const r = ranks[i];
+        const members = players.slice(i, i + span[i]);
+        return `
+      <article class="stat-card stat-card-slot${r != null && r <= 3 ? ` is-top is-top-${r}` : ''}">
+        <div class="stat-card-rank">${rankBadge(r)}</div>
+        <div class="stat-card-players">${members.map(m => `
+          <div class="stat-card-player">
+            <div class="stat-card-name">${escapeHtml(m.name)}${removedTag(m)}</div>${playerBody(m)}
+          </div>`).join('')}
+        </div>
+      </article>`;
+      }).join('');
+    }
+
+    if (statsFsCtx === active) renderStatsFs(players, ranks, span, ranked, anyScores, removedTag, pts);
+  }
+
+  // ---- full-screen statistics: a big leaderboard for a TV or projector ----
+  let statsFsCtx = null;      // the session shown full screen (null = closed)
+  let statsFsOpener = null;   // where keyboard focus goes back to
+  let statsFsNative = false;  // true while the browser's real full screen is on
+
+  function openStatsFs() {
+    if (!active) return;
+    statsFsCtx = active;
+    statsFsOpener = document.activeElement;
+    Icons.hydrate(el.statsFs);
+    el.statsFs.hidden = false;
+    document.documentElement.classList.add('is-stats-fs');
+    renderStats();
+    // Real full screen where the browser allows it; otherwise the view still covers the whole window
+    if (el.statsFs.requestFullscreen) el.statsFs.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+    el.statsFsClose.focus();
+  }
+
+  function closeStatsFs() {
+    if (!statsFsCtx) return;
+    statsFsCtx = null;
+    el.statsFs.hidden = true;
+    document.documentElement.classList.remove('is-stats-fs');
+    if (document.fullscreenElement === el.statsFs && document.exitFullscreen) {
+      statsFsNative = false;
+      document.exitFullscreen().catch(() => {});
+    }
+    if (statsFsOpener && document.contains(statsFsOpener)) statsFsOpener.focus();
+    statsFsOpener = null;
+  }
+
+  function renderStatsFs(players, ranks, span, ranked, anyScores, removedTag, pts) {
+    const played = players.filter(p => p.gamesPlayed > 0).length;
+    const matches = state.history.length;
+    el.statsFsSession.textContent = state.name || 'Open play';
+    el.statsFsMeta.textContent = `${matches} match${matches === 1 ? '' : 'es'} played · ${players.length} player${players.length === 1 ? '' : 's'}`
+      + (played < players.length ? ` (${played} played)` : '');
+    el.statsFsRank.setAttribute('aria-pressed', ranked ? 'true' : 'false');
+    el.statsFsRank.title = ranked ? RANK_TIP_ON : RANK_TIP_OFF;
+    el.statsFsRank.innerHTML = `${Icons.svg('trophy')}${ranked ? 'Ranked' : 'Rank players'}`;
+    el.statsFsHeadRow.innerHTML = (ranked ? '<th>Rank</th>' : '')
+      + '<th class="name">Player</th><th>Games</th><th>Wins</th><th>Losses</th><th>Win rate</th>'
+      + (anyScores ? '<th>Pts for</th><th>Pts against</th>' : '');
+    const cols = (ranked ? 6 : 5) + (anyScores ? 2 : 0);
+    // Each place is one block; a thin gap row separates the blocks
+    el.statsFsRows.innerHTML = players.length
+      ? players.map((p, i) => {
+        const startsSlot = !ranked || span[i] > 0;
+        const gap = i > 0 && startsSlot ? `<tr class="fs-gap" aria-hidden="true"><td colspan="${cols}"></td></tr>` : '';
+        const rankCell = ranked && span[i]
+          ? `<td class="rank-cell edge-l"${span[i] > 1 ? ` rowspan="${span[i]}"` : ''}>${rankBadge(ranks[i])}</td>` : '';
+        return `${gap}
+        <tr${ranked ? rankRowClass(ranks, span, i) : ''}>
+          ${rankCell}
+          <td class="name${ranked ? '' : ' edge-l'}">${escapeHtml(p.name)}${removedTag(p)}</td>
+          <td>${p.gamesPlayed}</td><td>${p.wins}</td><td>${p.losses}</td>
+          <td${anyScores ? '' : ' class="edge-r"'}>${winRateBadge(p)}</td>
+          ${anyScores ? `<td>${pts(p, 'pointsScored')}</td><td class="edge-r">${pts(p, 'pointsAgainst')}</td>` : ''}
+        </tr>`;
+      }).join('')
+      : '<tr><td class="name edge-l edge-r" colspan="9">No players yet.</td></tr>';
   }
 
   // ---- history ----
@@ -2323,7 +2656,8 @@ const App = (() => {
   /** Export PDF: builds the file with js/pdf.js so it looks the same on every device.
    *  If that fails (e.g. offline), opens the print dialog instead. */
   let exporting = false;
-  async function exportPdf() {
+  async function exportPdf(e) {
+    if (e) e.preventDefault(); // the button sits in the panel header: don't also open/close the panel
     if (exporting || !active) return;
     exporting = true;
     const ctx = active;
@@ -2361,7 +2695,8 @@ const App = (() => {
 
   /** Export the player statistics as a PDF (same look as the match history PDF). */
   let exportingStats = false;
-  async function exportStatsPdf() {
+  async function exportStatsPdf(e) {
+    if (e) e.preventDefault(); // the button sits in the panel header: don't also open/close the panel
     if (exportingStats || !active) return;
     exportingStats = true;
     const btn = el.btnExportStatsPdf;
@@ -2380,18 +2715,49 @@ const App = (() => {
     }
   }
 
+  /** A medal's pixels with their on-screen colours (read from the page's CSS, so the PDF always matches).
+   *  Returns { w, h, rects: [{ x, y, w, h, rgb }] } in the art's own pixel units. */
+  function medalPixels(place) {
+    const host = document.createElement('div');
+    host.style.cssText = 'position:absolute;left:-9999px;top:0;';
+    host.innerHTML = rankBadge(place);
+    document.body.appendChild(host);
+    const svg = host.querySelector('svg');
+    const box = svg.viewBox.baseVal;
+    const rects = [...svg.querySelectorAll('rect')].map(r => ({
+      x: +r.getAttribute('x'), y: +r.getAttribute('y'), w: +r.getAttribute('width'), h: +r.getAttribute('height'),
+      rgb: (getComputedStyle(r).fill.match(/\d+/g) || [0, 0, 0]).slice(0, 3).map(Number),
+    }));
+    host.remove();
+    return { w: box.width, h: box.height, rects };
+  }
+
   /** Data for the statistics PDF: the same rows and order as the Player Statistics table. */
   function buildStatsPdfData() {
     const hasScores = state.players.some(p => p.scoredGames > 0);
+    const players = statsPlayers();
+    const ranked = isStatsRanked();
+    const ranks = ranked ? statsRanks(players) : null; // once, not once per player
+    const span = ranked ? rankSpans(ranks) : null;
     return {
       ...pdfBase(),
       matches: state.history.length,
       hasScores,
-      stats: statsPlayers().map(p => {
+      ranked,
+      rankNote: ranked ? rankNote(players) : '', // why some players have no rank yet ('' = everyone is ranked)
+      // The same pixel trophy and medals as the table, for the top three places
+      medals: ranked ? { 1: medalPixels(1), 2: medalPixels(2), 3: medalPixels(3) } : null,
+      stats: players.map((p, i) => {
         const left = !Queue.isActive(p);
+        const r = ranks ? ranks[i] : i + 1;
+        const rank = r == null ? '—' : r;
         const pct = p.gamesPlayed > 0 ? Math.round((p.wins / p.gamesPlayed) * 100) : null;
         return {
           name: p.name,
+          rank: String(rank),
+          place: ranks ? ranks[i] : null,                                   // null = no rank yet
+          slotSize: span ? span[i] : 1,                                     // rows in this place (0 = part of the place above)
+          slotMid: !!span && i + 1 < players.length && span[i + 1] === 0,   // another player of the same place follows
           games: p.gamesPlayed,
           wins: p.wins,
           losses: p.losses,

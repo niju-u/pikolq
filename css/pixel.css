@@ -24,7 +24,7 @@
 /* Pixelify Sans has no "fi"/"fl" ligature glyphs. */
 .px-ui { font-variant-ligatures: none; font-feature-settings: "liga" 0; }
 
-.px-container { max-width: 1440px; margin: 0 auto; padding: 0 var(--gutter); }
+.px-container { max-width: 1180px; margin: 0 auto; padding: 0 var(--gutter); }
 .sr-only {
   position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
@@ -103,7 +103,6 @@ body.is-session .px-eyebrow { margin-bottom: 12px; }
 .px-court .pc-post { fill: var(--deep-2); }
 .px-court .pc-drop { fill: #1A1222; }
 .px-court .pc-gold { fill: var(--accent); }
-.px-court .pc-gold-d { fill: var(--gold); }
 .px-court .pc-shine { fill: #fff; }
 .px-court .pc-paddle-a { fill: var(--primary); }
 .px-court .pc-paddle-b { fill: #F3EDF7; }
@@ -228,12 +227,12 @@ body.is-session .px-eyebrow { margin-bottom: 12px; }
   }
   .px-ui .btn-sm { font-size: 0.7rem; box-shadow: 3px 3px 0 var(--px-shadow); }
   .px-ui .btn-primary { border-color: var(--deep-2); box-shadow: var(--px-u) var(--px-u) 0 var(--px-shadow); }
-  .px-ui .btn-secondary, .px-ui .btn-ghost { border-color: var(--px-line); box-shadow: 3px 3px 0 var(--px-shadow); }
+  .px-ui .btn-secondary { border-color: var(--px-line); box-shadow: 3px 3px 0 var(--px-shadow); }
   .px-ui .btn-danger, .px-ui .btn-danger-ghost { border-color: var(--error-fg); box-shadow: 3px 3px 0 var(--error-fg); }
   .px-ui .btn-accent { border-color: var(--px-ink); }
   @media (hover: hover) {
     .px-ui .btn:hover:not(:disabled) { transform: translate(-2px, -2px); box-shadow: calc(var(--px-u) + 2px) calc(var(--px-u) + 2px) 0 var(--px-shadow); }
-    .px-ui .btn-secondary:hover:not(:disabled), .px-ui .btn-ghost:hover:not(:disabled) { box-shadow: 5px 5px 0 var(--px-shadow); }
+    .px-ui .btn-secondary:hover:not(:disabled) { box-shadow: 5px 5px 0 var(--px-shadow); }
     .px-ui .btn-danger:hover:not(:disabled), .px-ui .btn-danger-ghost:hover:not(:disabled) { box-shadow: 5px 5px 0 var(--error-fg); }
   }
   .px-ui .btn:active:not(:disabled) { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--px-shadow); }
@@ -282,7 +281,7 @@ body.is-session .px-eyebrow { margin-bottom: 12px; }
   .px-ui .btn { box-shadow: 2px 2px 0 var(--px-shadow); }
   .px-ui .btn-sm { font-size: 0.64rem; letter-spacing: 0.02em; }
   /* Court buttons: smaller pixel label that may wrap, so the court never overflows */
-  .px-ui .btn-win, .px-ui .btn-tool { font-size: 0.66rem; letter-spacing: 0.01em; white-space: normal; line-height: 1.25; }
+  .px-ui .btn-tool { font-size: 0.66rem; letter-spacing: 0.01em; white-space: normal; line-height: 1.25; }
   .px-ui .court-teams { gap: 6px; }
   .px-ui .panel-icon { box-shadow: 1px 1px 0 var(--px-shadow); }
 }
@@ -343,6 +342,17 @@ body.is-session .px-eyebrow { margin-bottom: 12px; }
 /* Waiting Queue and Player Management: the count sits on a second line under the label */
 .panel-title-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; white-space: normal; }
 .panel-subcount { font-size: 0.62rem; }
+/* Header pills under the panel label: a lighter, more open pixel face than Silkscreen so the small text stays clear */
+.px-ui .panel-subcount {
+  font-family: var(--px-font); font-weight: 500; font-size: 0.74rem; letter-spacing: 0.06em;
+  text-transform: uppercase; line-height: 1.1; padding: 4px 10px;
+}
+/* Player Statistics and Match History: Export PDF is a small pill under the label, styled like the count pills */
+.panel-pill-btn { border: 0; cursor: pointer; transition: background 0.15s, color 0.15s; }
+.panel-pill-btn .icon { width: 12px; height: 12px; }
+.panel-pill-btn:hover:not(:disabled) { background: var(--lav-100); color: var(--plum); }
+.panel-pill-btn:focus-visible { outline: none; box-shadow: var(--focus); }
+.panel-pill-btn:disabled { cursor: progress; opacity: 0.7; }
 
 /* Waiting Queue actions sit at the top of the panel body (the header is the collapse toggle) */
 .queue-actions { margin-bottom: 10px; }
@@ -512,10 +522,20 @@ body.is-session .hero-band { padding-bottom: 128px; }
 }
 
 @media (max-width: 760px) {
-  .pxs-court { display: none; } /* phones: house + pup only */
-  .pxs-house { width: 67px; height: 56px; }
-  .pxf-yard { --dog-w: 30px; --dog-h: 21px; --ball: 10px; --dur: 10s; height: 56px; }
+  /* Phones: house, pup and the rallying players, all scaled down to share the width */
+  .px-fetch { gap: 8px; }
+  .pxs-house { width: 54px; height: 45px; }
+  .pxs-court { width: 128px; height: 45px; } /* same 200 x 70 shape as on bigger screens */
+  .pxf-yard { --dog-w: 26px; --dog-h: 18px; --ball: 9px; --dur: 10s; min-width: 0; height: 45px; }
   body .hero-band { padding-bottom: 100px; }
+}
+@media (max-width: 360px) {
+  /* Small phones: a little smaller again so the pup still has room to run */
+  .pxs-house { width: 46px; height: 38px; }
+  .pxs-court { width: 109px; height: 38px; }
+  .pxf-yard { --dog-w: 22px; --dog-h: 15px; --ball: 8px; height: 38px; }
+}
+@media (max-width: 760px) {
   /* Slim hero while sessions run: no room for the scene on phones */
   body.is-session .fetch-wrap { display: none; }
   body.is-session .hero-band { padding-bottom: 64px; }
@@ -533,10 +553,10 @@ body.is-session .hero-band { padding-bottom: 128px; }
 .sessions-footer { display: flex; justify-content: flex-end; margin-top: 24px; }
 @media (max-width: 520px) { .sessions-footer .btn { width: 100%; justify-content: center; } }
 
-/* Header, hero and footer use the session area's width (.app, 1440px) so all edges line up */
+/* Header, hero and footer use the session area's width (.app, 1180px) so all edges line up */
 .app-header .header-inner,
 .hero-band .px-container,
-.site-footer .px-container { max-width: 1440px; }
+.site-footer .px-container { max-width: 1180px; }
 
 /* Scoreboard ticker */
 .footer-ticker { overflow: hidden; background: var(--accent); border-bottom: 3px solid var(--px-ink); }
@@ -657,7 +677,6 @@ body.footer-in-view .to-top.is-visible { opacity: 0; pointer-events: none; trans
 @media (prefers-reduced-motion: reduce) {
   .px-star, .px-blink, .footer-ticker-track, .sister-art, .px-court * { animation: none !important; }
   .hero-band h1 .w { opacity: 1; transform: none; }
-  .px-court .pc-spark { opacity: 0; }
 }
 
 @media print {
@@ -824,38 +843,189 @@ html[data-theme="dark"] .theme-toggle .tt-moon { display: block; }
 @media screen {
   .px-ui {
     --team-bg: #F6F1E7;
-    --win-bg: #E9D49A;
-    --win-border: #8A6B1F;
-    --win-text: #4A3A10;
-    --win-hover-bg: #F2DE9E;
   }
   html[data-theme="dark"] {
     --team-bg: #2B2134;
-    --win-bg: #3F3420;
-    --win-border: #8A6B1F;
-    --win-text: #F2D58C;
-    --win-hover-bg: #4E4026;
   }
   .px-ui .court-card .team-box:not(.is-winner) { background: var(--team-bg); }
   .px-ui .court-card .vs-badge { background: var(--team-bg); border: 2px solid var(--px-line); }
-  .px-ui .btn-win {
-    background: var(--win-bg); border-color: var(--win-border); color: var(--win-text);
-    box-shadow: 3px 3px 0 var(--win-border);
-  }
-  .px-ui .btn-win:hover:not(:disabled) {
-    background: var(--win-hover-bg); border-color: var(--win-border); color: var(--win-text);
-    box-shadow: 5px 5px 0 var(--win-border);
-  }
-  .px-ui .btn-win:active:not(:disabled) { box-shadow: 0 0 0 var(--win-border); }
-  /* "Who won?": a touch larger with a strong colour so it stands out in both themes, normal weight
-     (its invisible twin in the tools column picks this up too, so the buttons stay aligned) */
+  /* "Who won? Tap the winning team": a touch larger with a strong colour so it stands out in both themes, normal weight
+     (its invisible twin in the tools column picks this up too, so the columns stay aligned) */
   html.px-ui .court-card .decision-label { font-size: 0.8rem; font-weight: 400; }
   html.px-ui:not([data-theme="dark"]) .court-card .decision-label { color: #3B2A47; }
   html.px-ui[data-theme="dark"] .court-card .decision-label { color: #F3EDF7; }
-  /* Each win button wears its team's colours (same in light and dark mode) */
-  .px-ui .btn-win[data-team="team1"] { --win-bg: #7E6A93; --win-border: #3B2A47; --win-text: #FFFFFF; --win-hover-bg: #8C78A2; }
-  .px-ui .btn-win[data-team="team2"] { --win-bg: #F0E2B6; --win-border: #8A6B1F; --win-text: #33283B; --win-hover-bg: #F6EBCB; }
 }
-@media screen and (max-width: 767px) {
-  .px-ui .btn-win, .px-ui .btn-win:hover:not(:disabled) { box-shadow: 2px 2px 0 var(--win-border); }
+/* PC cards side by side: the hint shares its row with Announce Players, so it scales a little to stay on one line */
+@container (min-width: 461px) and (max-width: 859px) {
+  html.px-ui .court-card .court-decision.is-hint .decision-label { font-size: 0.62rem; letter-spacing: 0.04em; }
 }
+/* Phones: "Who won? Tap the winning team" on one line, sized from the card's width so it fits any phone */
+@container (max-width: 460px) {
+  html.px-ui .court-card .court-decision.is-hint .decision-label {
+    white-space: nowrap; font-size: min(0.8rem, 4cqi); letter-spacing: 0.04em;
+  }
+}
+
+/* =====================================================================
+   Contrast fixes from the design audit (all text now passes WCAG AA, 4.5:1)
+   ===================================================================== */
+html.px-ui:not([data-theme="dark"]) .court-card .score-label,
+html.px-ui:not([data-theme="dark"]) .court-card .score-field span { color: #5C4F69; }
+html.px-ui:not([data-theme="dark"]) .court-card .decided-label,
+html.px-ui:not([data-theme="dark"]) .court-card .score-field.is-winner span { color: #1F5134; }
+html.px-ui:not([data-theme="dark"]) .court-card .link-btn { color: #5C4369; }
+html.px-ui:not([data-theme="dark"]) .court-card .team-box.is-winner .team-label { color: #5C4F69; }
+html.px-ui:not([data-theme="dark"]) .brand h1 span { color: #7A5C90; }
+html.px-ui[data-theme="dark"] #sessions-count { color: #C4AEDA; }
+html.px-ui[data-theme="dark"] .court-card .team-box.is-winner .team-label { color: #D6CCDF; }
+html.px-ui[data-theme="dark"] .footer-sponsor-label { color: #6E6278; }
+
+/* =====================================================================
+   Footer: same fonts and details as tournament.pikolq
+   (Pixelify for every pixel label, the same line spacing, title and button style)
+   ===================================================================== */
+.site-footer { --px-label: "Pixelify Sans", "Plus Jakarta Sans", sans-serif; line-height: 1.6; }
+.site-footer h4 { line-height: 1.2; }
+.site-footer .footer-title { font-weight: 800; letter-spacing: -0.4px; line-height: 1.6; }
+.site-footer .footer-top { line-height: 1.6; }
+.px-ui .site-footer .sister-btn {
+  font-family: var(--px-font); font-size: 0.82rem; font-weight: 700; letter-spacing: 0.04em; line-height: 1.35;
+  padding: 8px 24px; min-height: 46px; gap: 9px; border-color: transparent; box-shadow: 4px 4px 0 var(--px-ink);
+}
+html.px-ui:not([data-theme="dark"]) .site-footer .footer-sponsor-label { color: #6E6278; }
+
+/* Logo twists a little on hover, like tournament.pikolq */
+.app-header .brand-mark { transition: height 0.2s ease, width 0.2s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+@media (hover: hover) { .app-header .brand:hover .brand-mark { transform: rotate(-8deg) scale(1.05); } }
+@media (prefers-reduced-motion: reduce) { .app-header .brand:hover .brand-mark { transform: none; } }
+
+/* =====================================================================
+   Player Statistics: full-screen button, Rank button, rank badges
+   ===================================================================== */
+/* Full-screen icon: square, at the right end of the button row */
+.stats-actions .stats-fs-open { margin-left: auto; padding-left: 0; padding-right: 0; aspect-ratio: 1 / 1; justify-content: center; }
+.stats-actions .stats-fs-open .icon { margin: 0; }
+
+/* Rank button pressed = list is ranked */
+.px-ui .stats-actions .btn[aria-pressed="true"],
+.px-ui .stats-fs .btn[aria-pressed="true"] { background: var(--accent); color: #33283B; border-color: var(--px-ink); }
+
+/* Rank numbers: gold, silver, bronze for the top three */
+.rank-num {
+  display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 6px;
+  font-family: var(--px-label); font-weight: 700; font-size: 0.85rem; line-height: 1; font-variant-numeric: tabular-nums; /* blocky digits: a 3 never looks like an 8 */
+  color: var(--heading); background: var(--lav-50); border: 2px solid var(--px-line);
+}
+
+/* 1st: a gold pixel trophy (own dark outline) with a bold white 1 */
+.rank-medal-1 .t-line { fill: #2A1E35; } .rank-medal-1 .t-gold { fill: #F7C23A; } .rank-medal-1 .t-light { fill: #FFE59A; }
+.rank-medal-1 .t-dark { fill: #E0892E; } .rank-medal-1 .t-num { fill: #3B2A47; } .rank-medal-1 .t-shadow { fill: #C7712A; }
+.rank-medal-art.rank-gold-art { width: 28px; height: 30px; }
+
+/* 2nd and 3rd: a pixel medal with the number on it, hanging from a red neck ribbon */
+.rank-medal { display: inline-block; line-height: 0; vertical-align: middle; }
+.rank-medal-art { display: block; width: 26px; height: 34px; image-rendering: pixelated; }
+.rank-medal .md-ribbon { fill: #E25B4F; } .rank-medal .md-ribbon2 { fill: #B33A33; }
+.rank-medal-2 .md-edge { fill: #5E6773; } .rank-medal-2 .md-metal { fill: #C9CED6; } .rank-medal-2 .md-light { fill: #F4F6F8; }
+.rank-medal-2 .md-shade { fill: #9BA3AE; } .rank-medal-2 .md-digit { fill: #4A525C; } .rank-medal-2 .md-clasp { fill: #9BA3AE; }
+.rank-medal-3 .md-edge { fill: #6E3D1B; } .rank-medal-3 .md-metal { fill: #D08A4E; } .rank-medal-3 .md-light { fill: #F2C79C; }
+.rank-medal-3 .md-shade { fill: #A8642E; } .rank-medal-3 .md-digit { fill: #5A2E10; } .rank-medal-3 .md-clasp { fill: #A8642E; }
+.rank-num.rank-none { background: none; border-color: transparent; color: var(--text-2); }
+.stats-table .rank-col, .stats-table .rank-cell { width: 76px; white-space: nowrap; }
+
+.stat-card-name .rank-num { min-width: 26px; height: 26px; font-size: 0.85rem; vertical-align: middle; }
+.stat-card-name > .rank-num, .stat-card-name > .rank-medal { margin-right: 8px; }
+
+/* =====================================================================
+   Player Statistics, full screen: a big leaderboard for a TV or projector.
+   Dark in both themes, like the hero.
+   ===================================================================== */
+.stats-fs {
+  position: fixed; inset: 0; z-index: 2000; overflow: auto; color: #FFFFFF;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 16px 16px,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 16px 16px,
+    #2A1E35;
+}
+.stats-fs[hidden] { display: none; }
+html.is-stats-fs, html.is-stats-fs body { overflow: hidden; }
+.stats-fs-inner { max-width: 1400px; margin: 0 auto; padding: clamp(16px, 3vw, 40px); }
+.stats-fs-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; margin-bottom: clamp(14px, 3vh, 30px); }
+.stats-fs-session {
+  margin: 0 0 6px; font-family: var(--px-label); text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: clamp(0.72rem, 1.2vw, 0.95rem); color: var(--accent); overflow-wrap: anywhere;
+}
+.stats-fs-title { margin: 0; font-family: var(--px-font); font-weight: 700; font-size: clamp(1.8rem, 4.5vw, 3.4rem); line-height: 1.05; color: #FFFFFF; text-shadow: 4px 4px 0 var(--px-ink); }
+.stats-fs-meta { margin: 8px 0 0; color: rgba(255, 255, 255, 0.78); font-size: clamp(0.85rem, 1.3vw, 1.05rem); }
+.stats-fs-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.stats-fs-body { overflow-x: auto; }
+.stats-fs-table { width: 100%; min-width: 520px; border-collapse: separate; border-spacing: 0; font-size: clamp(1rem, 2vw, 1.6rem); }
+.stats-fs-table th {
+  padding: 0 12px 2px; text-align: center; white-space: nowrap;
+  font-family: var(--px-label); font-weight: 400; text-transform: uppercase; letter-spacing: 0.06em;
+  font-size: clamp(0.68rem, 1.1vw, 0.9rem); color: rgba(255, 255, 255, 0.78);
+}
+.stats-fs-table th.name, .stats-fs-table td.name { text-align: left; }
+.stats-fs-table td {
+  padding: clamp(8px, 1.6vh, 16px) 12px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 700;
+  background: #5A4870; border-top: 3px solid #1E1527; border-bottom: 3px solid #1E1527; /* lighter rows so they stand out on the dark screen */
+}
+.stats-fs-table td.edge-l { border-left: 3px solid #1E1527; }
+.stats-fs-table td.edge-r { border-right: 3px solid #1E1527; box-shadow: 4px 0 0 #1E1527; }
+/* Gap between places (players sharing a place stay together in one block) */
+.stats-fs-table tr.fs-gap td { height: 8px; padding: 0; border: 0; background: none; box-shadow: none; }
+.stats-fs-table thead + tbody tr:first-child td { border-top-width: 3px; }
+.stats-fs-table tr.rank-mid td:not(.rank-cell) { border-bottom: 0; }
+.stats-fs-table tr.rank-cont td { border-top: 2px dashed rgba(30, 21, 39, 0.55); }
+.stats-fs-table td.name { font-weight: 800; overflow-wrap: anywhere; }
+.stats-fs-table tr.is-top-1 td { background: #74602F; } /* gold tint */
+.stats-fs-table tr.is-top-2 td { background: #66607A; } /* silver tint */
+.stats-fs-table tr.is-top-3 td { background: #74533B; } /* bronze tint */
+.stats-fs-table .rank-num { min-width: clamp(34px, 4vw, 52px); height: clamp(34px, 4vw, 52px); font-size: clamp(1rem, 2vw, 1.5rem); }
+.stats-fs-table .rank-num.rank-none { color: rgba(255, 255, 255, 0.6); }
+.stats-fs-table .rank-medal-art { width: clamp(26px, 3.4vw, 44px); height: clamp(34px, 4.45vw, 58px); }
+.stats-fs-table .rank-medal-art.rank-gold-art { width: clamp(28px, 3.7vw, 50px); height: clamp(30px, 3.95vw, 54px); }
+.stats-fs-table .rate { font-size: clamp(0.8rem, 1.5vw, 1.15rem); min-width: clamp(56px, 6vw, 90px); }
+.stats-fs-table .muted-tag { font-size: 0.6em; }
+@media print { .stats-fs { display: none !important; } }
+
+/* Phones: "Voice" and "Announce players" side by side (a little less padding so both fit on one row) */
+@media (max-width: 520px) {
+  .panel-courts .panel-head-actions .btn { padding-left: 8px; padding-right: 8px; gap: 6px; white-space: nowrap; }
+}
+@media (max-width: 360px) {
+  .panel-courts .panel-head-actions { gap: 4px 6px; }
+  .panel-courts .panel-head-actions .btn { padding-left: 5px; padding-right: 5px; gap: 5px; font-size: 0.6rem; letter-spacing: 0; }
+  .panel-courts .panel-head-actions .btn .icon { width: 14px; height: 14px; }
+}
+/* Very small phones: drop the little settings icon on "Voice" so both buttons still share a row */
+@media (max-width: 360px) {
+  .panel-courts [data-el="btn-voice-settings"] .icon { display: none; }
+}
+/* Full-screen statistics on phones: every column fits without scrolling sideways */
+@media (max-width: 600px) {
+  .stats-fs-actions { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stats-fs-actions .btn { justify-content: center; padding-left: 8px; padding-right: 8px; white-space: nowrap; font-size: 0.66rem; }
+  .stats-fs-table { min-width: 0; font-size: 0.9rem; }
+  .stats-fs-table th { padding: 0 4px 2px; font-size: 0.56rem; letter-spacing: 0.02em; }
+  .stats-fs-table td { padding: 8px 4px; border-top-width: 2px; border-bottom-width: 2px; }
+  .stats-fs-table td.edge-l { border-left-width: 2px; }
+  .stats-fs-table td.edge-r { border-right-width: 2px; box-shadow: none; }
+  .stats-fs-table tr.fs-gap td { height: 6px; }
+  .stats-fs-table .rank-num { min-width: 26px; height: 26px; font-size: 0.85rem; padding: 0 4px; }
+  .stats-fs-table .rate { min-width: 0; padding: 2px 6px; font-size: 0.72rem; }
+}
+
+/* Phones: Rank, Export PDF and the full-screen icon share one row (a little less padding); very small phones may wrap */
+@media (max-width: 520px) {
+  .stats-actions { gap: 8px; }
+  .stats-actions .btn:not(.stats-fs-open) { padding-left: 8px; padding-right: 8px; gap: 6px; white-space: nowrap; }
+}
+
+/* Ranked list: players who share a place share one slot */
+.stats-table.is-ranked tbody tr { content-visibility: visible; }
+.stats-table.is-ranked .rank-cell { vertical-align: middle; border-bottom: 1px solid var(--border); }
+.stats-table.is-ranked tr.rank-mid td:not(.rank-cell) { border-bottom: 1px dashed var(--border); }
+.stat-card-slot { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; content-visibility: visible; }
+.stat-card-slot .stat-card-rank { display: grid; place-items: center; min-width: 30px; }
+.stat-card-slot .stat-card-player + .stat-card-player { margin-top: 10px; padding-top: 10px; border-top: 2px dashed var(--border); }

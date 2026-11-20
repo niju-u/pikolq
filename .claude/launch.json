@@ -4,8 +4,24 @@
     {
       "name": "pickleball-static",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8531"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8531"
+      ],
       "port": 8531
+    },
+    {
+      "name": "tournament-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8532",
+        "--directory",
+        "C:/laragon/www/pickleballbracket"
+      ],
+      "port": 8532
     }
   ]
 }

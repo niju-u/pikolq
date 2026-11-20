@@ -251,12 +251,6 @@ const Queue = (() => {
     return { team1: best.team1, team2: best.team2, cost: best.cost };
   }
 
-  /** Old version kept for compatibility: best split, no side swap. */
-  function buildTeams(selected, matchType, currentSeq) {
-    const s = bestSplit(selected, matchType, currentSeq, () => 0);
-    return { team1: s.team1, team2: s.team2 };
-  }
-
   /** Pick who plays next (see top of file). Returns { team1, team2 }, or null if there aren't enough players. */
   function chooseMatch(waitingOrder, perMatch, matchType, byId, currentSeq, rng) {
     const info = buildUnits(waitingOrder, matchType, byId).map(u => ({
@@ -541,7 +535,6 @@ const Queue = (() => {
     activePartnerId,
     selectPlayers,
     keepsFixedPairs,
-    buildTeams,
     bestSplit,
     chooseMatch,
     lineupCost,
