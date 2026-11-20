@@ -154,6 +154,7 @@ const App = (() => {
       waitingList: get('waiting-list'),
       queueMode: get('queue-mode'),
       btnResetOrder: get('btn-reset-order'),
+      queueCount: get('queue-count'),
       strictRest: get('strict-rest'),
       btnAnnounce: get('btn-announce'),
       btnAnnouncePlaying: get('btn-announce-playing'),
@@ -396,6 +397,9 @@ const App = (() => {
     el.btnNewSession = document.getElementById('btn-new-session');
     el.btnVoice = document.getElementById('btn-voice');
     el.btnCancelSetup = document.getElementById('btn-cancel-setup');
+    el.sessionsFooter = document.getElementById('sessions-footer');
+    el.btnClearAll = document.getElementById('btn-clear-all');
+    el.btnClearAllTop = document.getElementById('btn-clear-all-top');
     el.inputSessionName = document.getElementById('input-session-name');
 
     el.form = document.getElementById('setup-form');
@@ -424,7 +428,9 @@ const App = (() => {
   function bindEvents() {
     el.btnNewSession.addEventListener('click', startNewSession);
     el.btnVoice.addEventListener('click', toggleVoice);
-    el.btnCancelSetup.addEventListener('click', () => showView('sessions'));
+    el.btnCancelSetup.addEventListener('click', () => pixelWipe(() => showView('sessions')));
+    el.btnClearAll.addEventListener('click', onClearAllSessions);
+    el.btnClearAllTop.addEventListener('click', onClearAllSessions);
     el.btnToggleAll.addEventListener('click', () => {
       const open = ![...contexts.values()].some(ctx => ctx.root.open);
       contexts.forEach(ctx => { ctx.root.open = open; });
@@ -731,7 +737,11 @@ const App = (() => {
     el.setupErrors.innerHTML = '';
 
     const setup = Scheduler.computeCourtSetup(d);
+    pixelWipe(() => createSession(d, setup));
+  }
 
+  /** Build the new session from the setup form and show it (runs while the pixel wipe covers the page). */
+  function createSession(d, setup) {
     const fresh = blankState();
     fresh.name = (d.sessionName || '').trim().slice(0, MAX_SESSION_NAME) || defaultSessionName();
     fresh.startedMs = Date.now();
@@ -753,7 +763,7 @@ const App = (() => {
     renderSession();
     resetSetupForm();
     showView('sessions');
-    ctx.root.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    ctx.root.scrollIntoView({ block: 'start' });
   }
 
   // ---------- match logic (no page updates) ----------
@@ -1610,14 +1620,97 @@ const App = (() => {
     el.btnToggleAll.hidden = settingUp || count < 2;
     el.btnToggleAll.textContent = [...contexts.values()].some(ctx => ctx.root.open) ? 'Collapse all' : 'Expand all';
     el.btnCancelSetup.hidden = count === 0;
+    el.sessionsFooter.hidden = settingUp || count === 0;
+    el.btnClearAllTop.hidden = settingUp || count === 0;
+  }
+
+  /** Delete every session (after confirming), behind the pixel wipe, and go back to setup. */
+  function onClearAllSessions() {
+    const count = contexts.size;
+    if (!count) return;
+    const what = count === 1 ? 'the session' : `all ${count} sessions`;
+    if (!confirm(`Delete ${what}? This removes every player, court, stat and match history. This cannot be undone.`)) return;
+    pixelWipe(() => {
+      closeModal();
+      [...contexts.values()].forEach(ctx => {
+        Storage.deleteSession(ctx.id);
+        removeSessionFromPage(ctx);
+      });
+      resetSetupForm();
+      showView('setup');
+      el.setupView.scrollIntoView({ block: 'start' });
+      showToast(count === 1 ? 'Session deleted.' : `All ${count} sessions deleted.`);
+    });
   }
 
   /** Show the new-session form. Existing sessions keep running. */
   function startNewSession() {
     closeModal();
-    showView('setup');
-    // Go straight to the form: the top of the page is the hero banner.
-    el.setupView.scrollIntoView({ block: 'start' });
+    pixelWipe(() => {
+      showView('setup');
+      // Go straight to the form: the top of the page is the hero banner.
+      el.setupView.scrollIntoView({ block: 'start' });
+    });
+  }
+
+  // ---------- pixel wipe (same as the tournament site) ----------
+
+  /* Court-coloured squares pop in at random, the page swaps underneath, then the squares pop back out. */
+  const WIPE_IN = 400;  // ms until the screen is fully covered
+  const WIPE_OUT = 420; // ms until the overlay is gone again
+  let wipeEl = null;
+  let wipeBusy = false;
+  let wipeNext = null;
+
+  function wipeCells() {
+    if (!wipeEl) {
+      wipeEl = document.createElement('div');
+      wipeEl.className = 'px-wipe';
+      wipeEl.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(wipeEl);
+    }
+    const w = window.innerWidth;
+    const size = w < 640 ? 40 : w < 1024 ? 56 : 72;
+    const cols = Math.ceil(w / size);
+    const rows = Math.ceil(window.innerHeight / size);
+    wipeEl.style.setProperty('--px', `${size}px`);
+    wipeEl.style.setProperty('--cols', cols);
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < cols * rows; i++) {
+      const cell = document.createElement('span');
+      const roll = Math.random();
+      cell.className = roll > 0.95 ? 'px-cell is-gold' : roll > 0.78 ? 'px-cell is-lav' : 'px-cell';
+      cell.style.setProperty('--px-d', `${Math.round(Math.random() * 240)}ms`);
+      frag.appendChild(cell);
+    }
+    wipeEl.replaceChildren(frag);
+  }
+
+  /** Run `update` (a page switch) behind a pixel wipe. Reduced motion: just run it. */
+  function pixelWipe(update) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { update(); return; }
+    if (wipeBusy) { wipeNext = update; return; } // a newer switch wins; it runs at cover time
+    wipeBusy = true;
+    wipeNext = update;
+    wipeCells();
+    wipeEl.hidden = false;
+    void wipeEl.offsetWidth; // commit the hidden state so the cells transition in
+    wipeEl.classList.add('is-covered');
+    setTimeout(() => {
+      const run = wipeNext;
+      wipeNext = null;
+      try { run(); } finally {
+        // Fresh random order for the way out.
+        wipeEl.querySelectorAll('.px-cell').forEach(c => c.style.setProperty('--px-d', `${Math.round(Math.random() * 240)}ms`));
+        wipeEl.classList.remove('is-covered');
+        setTimeout(() => {
+          wipeBusy = false;
+          if (wipeNext) { const again = wipeNext; wipeNext = null; pixelWipe(again); return; }
+          wipeEl.hidden = true;
+          wipeEl.replaceChildren();
+        }, WIPE_OUT);
+      }
+    }, WIPE_IN);
   }
 
   function openRenameSessionModal() {
@@ -1971,6 +2064,7 @@ const App = (() => {
     const manual = new Set(state.waitOverride || []);
 
     el.btnResetOrder.hidden = !state.waitOverride;
+    el.queueCount.textContent = `${waiting.length} waiting`;
     el.strictRest.checked = !!state.strictRest;
     el.queueMode.className = `queue-mode${state.waitOverride ? ' is-manual' : ''}`;
     el.queueMode.html = state.waitOverride

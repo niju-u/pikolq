@@ -302,6 +302,46 @@ body.is-session .px-eyebrow { margin-bottom: 12px; }
   content: ""; position: absolute; left: 0; right: 0; top: -16px; height: 16px; pointer-events: none;
   background: conic-gradient(var(--accent) 25%, transparent 0 50%, var(--accent) 0 75%, transparent 0) 0 0 / 32px 32px repeat-x;
 }
+/* =====================================================================
+   Pixel wipe between screens (same as the tournament site)
+   ===================================================================== */
+.px-wipe {
+  position: fixed; inset: 0; z-index: 2000;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), var(--px));
+  grid-auto-rows: var(--px);
+  overflow: hidden;
+  pointer-events: none;
+}
+.px-wipe[hidden] { display: none; }
+.px-wipe.is-covered { pointer-events: auto; } /* swallow clicks mid-wipe */
+.px-cell {
+  background: #6F527F;
+  opacity: 0; transform: scale(0.4);
+  /* steps() keeps the pop chunky and pixel-like rather than smooth */
+  transition: opacity 0.16s steps(2, end), transform 0.16s steps(3, end);
+  transition-delay: var(--px-d, 0ms);
+}
+.px-cell.is-lav { background: #A489B8; }
+.px-cell.is-gold { background: var(--accent); }
+.px-wipe.is-covered .px-cell { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .px-wipe { display: none; } }
+@media print { .px-wipe { display: none !important; } }
+
+/* Waiting Queue actions sit at the top of the panel body (the header is the collapse toggle) */
+.queue-actions { margin-bottom: 10px; }
+.queue-actions:not(:has(> :not([hidden]))) { display: none; }
+
+/* Phones: session toolbar buttons in a tidy 2 x 2 grid (voice, collapse / clear all, new session) */
+@media (max-width: 520px) {
+  .sessions-toolbar-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .sessions-toolbar-actions .btn { justify-content: center; text-align: center; min-width: 0; }
+}
+
+/* Clear All Sessions, below the last session */
+.sessions-footer { display: flex; justify-content: flex-end; margin-top: 24px; }
+@media (max-width: 520px) { .sessions-footer .btn { width: 100%; justify-content: center; } }
+
 /* Header, hero and footer use the session area's width (.app, 1440px) so all edges line up */
 .app-header .header-inner,
 .hero-band .px-container,
