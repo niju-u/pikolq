@@ -438,8 +438,6 @@ main {
   font-weight: 600;
 }
 
-.details-toggle-text::before { content: "Expand"; }
-.details-panel[open] .details-toggle-text::before { content: "Collapse"; }
 
 .details-chevron {
   width: 30px;
@@ -823,6 +821,8 @@ main {
 }
 
 .btn-tool { font-size: 0.85rem; }
+/* Invisible twin of the "Who won?" label, only used in the wide layout so the columns line up */
+.tools-spacer { display: none; visibility: hidden; }
 
 /* Wide court card (e.g. one court on desktop): teams | result | tools in one row */
 @container (min-width: 860px) {
@@ -842,6 +842,9 @@ main {
     align-self: stretch;
     align-content: center;
   }
+  /* Line Swap / Edit up with the two win buttons: same spacer above, same button height */
+  .court-tools .tools-spacer { display: block; }
+  .court-decision .btn-win, .court-tools .btn-tool { min-height: 58px; }
 }
 
 .court-idle {
