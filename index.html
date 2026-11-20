@@ -25,7 +25,7 @@
 })();
 </script>
 <link rel="stylesheet" href="css/style.css?v=95" />
-<link rel="stylesheet" href="css/pixel.css?v=99" />
+<link rel="stylesheet" href="css/pixel.css?v=103" />
 </head>
 <body>
 <script>
@@ -146,6 +146,7 @@
       <div class="sessions-toolbar-actions">
         <button type="button" class="btn btn-secondary btn-sm" id="btn-voice" aria-pressed="true" title="Automatically say the winners and score when a match is completed" hidden></button>
         <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-all">Collapse all</button>
+        <button type="button" class="btn btn-danger btn-sm" id="btn-clear-all-top"><span data-icon="trash"></span>Clear All Sessions</button>
         <button type="button" class="btn btn-primary btn-sm" id="btn-new-session"><span data-icon="plus"></span>New Session</button>
       </div>
     </div>
@@ -232,6 +233,11 @@
     <!-- ================= SESSIONS ================= -->
     <div class="sessions-list" id="sessions-list" hidden></div>
 
+    <!-- Below the last session: remove every session at once -->
+    <div class="sessions-footer no-print" id="sessions-footer" hidden>
+      <button type="button" class="btn btn-danger" id="btn-clear-all"><span data-icon="trash"></span>Clear All Sessions</button>
+    </div>
+
     <!-- One copy of this is made for each session -->
     <template id="session-template">
       <details class="session-block" open>
@@ -284,13 +290,15 @@
 
           <div class="dash-row no-print">
             <!-- Waiting queue -->
-            <section class="panel panel-queue" data-el="waiting-card">
-              <div class="panel-head">
+            <details class="panel details-panel panel-queue" data-el="waiting-card" open>
+              <summary class="panel-head details-summary">
                 <h2 class="panel-title"><span class="panel-icon" data-icon="users"></span>Waiting Queue</h2>
-                <div class="panel-head-actions">
-                  <button type="button" class="link-btn" data-el="btn-reset-order" hidden>Reset to automatic</button>
-                  <button type="button" class="btn btn-secondary btn-sm" data-el="btn-announce" title="Say out loud who is next to play" hidden><span data-icon="volume"></span>Announce next</button>
-                </div>
+                <span class="details-toggle"><span class="badge badge-neutral" data-el="queue-count"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
+              </summary>
+              <div class="details-body">
+              <div class="panel-head-actions queue-actions">
+                <button type="button" class="link-btn" data-el="btn-reset-order" hidden>Reset to automatic</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-el="btn-announce" title="Say out loud who is next to play" hidden><span data-icon="volume"></span>Announce next</button>
               </div>
               <p class="queue-mode" data-el="queue-mode"></p>
 
@@ -317,7 +325,8 @@
                 </details>
               </div>
               <div class="queue" data-el="waiting-list"></div>
-            </section>
+              </div>
+            </details>
 
             <!-- Player statistics -->
             <details class="panel details-panel panel-stats" data-el="stats-card" open>
@@ -514,7 +523,7 @@
 <script src="js/storage.js?v=94"></script>
 <script src="js/session.js?v=94"></script>
 <script src="js/pdf.js?v=94"></script>
-<script src="js/app.js?v=94"></script>
+<script src="js/app.js?v=98"></script>
 <script src="js/site.js?v=94"></script>
 </body>
 </html>
