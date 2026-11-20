@@ -1873,8 +1873,7 @@ main {
 
 /* ---------- Setup view (session setup screen) ---------- */
 .setup-view {
-  max-width: 1240px;
-  margin: 0 auto;
+  /* Same width as the sessions, header, hero and footer (the 1440px .app area) */
   width: 100%;
 }
 

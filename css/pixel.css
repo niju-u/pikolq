@@ -302,11 +302,14 @@ body.is-session .px-eyebrow { margin-bottom: 12px; }
   content: ""; position: absolute; left: 0; right: 0; top: -16px; height: 16px; pointer-events: none;
   background: conic-gradient(var(--accent) 25%, transparent 0 50%, var(--accent) 0 75%, transparent 0) 0 0 / 32px 32px repeat-x;
 }
-.site-footer .px-container { max-width: 1180px; }
+/* Header, hero and footer use the session area's width (.app, 1440px) so all edges line up */
+.app-header .header-inner,
+.hero-band .px-container,
+.site-footer .px-container { max-width: 1440px; }
 
 /* Scoreboard ticker */
 .footer-ticker { overflow: hidden; background: var(--accent); border-bottom: 3px solid var(--px-ink); }
-.footer-ticker-track { display: flex; width: max-content; animation: ticker 26s linear infinite; }
+.footer-ticker-track { display: flex; width: max-content; animation: ticker 156s linear infinite; }
 .footer-ticker span {
   display: inline-flex; align-items: center; gap: 22px; padding: 10px 0 10px 22px;
   font-family: var(--px-label); font-size: 0.82rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--deep-2);
@@ -545,6 +548,18 @@ html[data-theme="dark"] .theme-toggle .tt-moon { display: block; }
 @media (max-width: 480px) {
   .px-ui .brand h1 { display: flex; flex-direction: column; white-space: normal; font-size: 1.02rem; line-height: 1.05; }
   .px-ui .brand-tagline { display: none; }
+}
+/* Small phones (about 320px wide): compact logo, toggle and sponsor so the full title still fits */
+@media (max-width: 360px) {
+  .header-inner { gap: 8px; }
+  .brand { gap: 8px; }
+  .brand-mark, .app-header.is-condensed .brand-mark { width: 34px; height: 34px; }
+  .px-ui .brand h1 { font-size: 0.94rem; }
+  .header-inner > .theme-toggle, .app-header.is-condensed .theme-toggle { width: 34px; height: 34px; }
+  .theme-toggle svg { width: 18px; height: 18px; }
+  .sponsor { padding: 2px 6px 3px; }
+  .sponsor-label, .app-header.is-condensed .sponsor-label { font-size: 0.44rem; }
+  .sponsor-logo, .app-header.is-condensed .sponsor-logo { height: 28px; }
 }
 
 /* Open session: tinted pixel-grid backdrop so the white panels stand out from it */
