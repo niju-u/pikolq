@@ -328,15 +328,206 @@ body.is-session .px-eyebrow { margin-bottom: 12px; }
 @media (prefers-reduced-motion: reduce) { .px-wipe { display: none; } }
 @media print { .px-wipe { display: none !important; } }
 
+/* Collapsible panel headers stay on one line: count + arrow pinned to the upper right,
+   the title shortens with "…" if a narrow panel runs out of room */
+.details-summary { flex-wrap: nowrap; }
+.details-summary .panel-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.details-summary .panel-title .panel-icon { flex-shrink: 0; }
+.details-summary .details-toggle { flex-shrink: 0; margin-left: auto; }
+/* Narrow panels: drop the count badge first so the full title and the arrow still fit */
+.details-panel { container-type: inline-size; }
+@container (max-width: 340px) {
+  .details-summary .details-toggle .badge { display: none; }
+}
+
+/* Waiting Queue and Player Management: the count sits on a second line under the label */
+.panel-title-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; white-space: normal; }
+.panel-subcount { font-size: 0.62rem; }
+
 /* Waiting Queue actions sit at the top of the panel body (the header is the collapse toggle) */
 .queue-actions { margin-bottom: 10px; }
 .queue-actions:not(:has(> :not([hidden]))) { display: none; }
 
-/* Phones: session toolbar buttons in a tidy 2 x 2 grid (voice, collapse / clear all, new session) */
+/* Small square icon-only button (e.g. Clear all sessions; the label is in its tooltip) */
+.btn-icon-only { padding-left: 0; padding-right: 0; width: 38px; flex: 0 0 38px; justify-content: center; }
+.btn-icon-only .icon { margin: 0; }
+
+/* Phones: voice + collapse on one row, New Session + the trash icon on the next */
 @media (max-width: 520px) {
-  .sessions-toolbar-actions { display: grid; grid-template-columns: 1fr 1fr; }
-  .sessions-toolbar-actions .btn { justify-content: center; text-align: center; min-width: 0; }
+  .sessions-toolbar-actions .btn { flex: 1 1 40%; justify-content: center; text-align: center; min-width: 0; }
+  .sessions-toolbar-actions .btn-icon-only { flex: 0 0 38px; }
+  /* Wide enough that it always starts its own row, with the trash icon beside it */
+  .sessions-toolbar-actions #btn-new-session { flex: 1 1 60%; }
 }
+
+/* =====================================================================
+   Pixel players on the court cards (1 per side in singles, 2 in doubles)
+   ===================================================================== */
+.pxp-row { display: flex; justify-content: center; align-items: flex-end; gap: 8px; height: 48px; }
+.pxp-slot { display: block; width: 34px; height: 48px; }
+.pxp { display: block; width: 100%; height: 100%; overflow: visible; image-rendering: pixelated; }
+.pxp-team2 .pxp { transform: scaleX(-1); } /* Team 2 faces Team 1 */
+.pxp-hair, .pxp-shorts, .pxp-shoe { fill: #3B2A47; }
+.pxp-skin { fill: #E8B98A; }
+.pxp-eye { fill: #3B2A47; }
+.pxp-team1 .pxp-shirt { fill: #F7D774; } /* Team 1: yellow players on a lavender box */
+.pxp-team2 .pxp-shirt { fill: #A489B8; } /* Team 2: lavender players on a yellow box */
+.pxp-paddle { fill: #6F527F; }
+.pxp-paddle-hi { fill: #A489B8; }
+.pxp-paddle-edge { fill: #5C4369; } /* darker top corners so the face reads as gently rounded */
+.pxp-handle { fill: #3B2A47; }
+.pxp-floor { fill: rgba(59, 42, 71, 0.18); }
+html[data-theme="dark"] .pxp-floor { fill: rgba(0, 0, 0, 0.35); }
+/* Court team boxes, same in light and dark mode:
+   Team 1 = lavender box (white text), Team 2 = yellow box (dark text) */
+@media screen {
+  .px-ui .court-card .team-box.is-team1:not(.is-winner) { background: #7E6A93; }
+  .px-ui .court-card .team-box.is-team2:not(.is-winner) { background: #F0E2B6; } /* soft, muted gold (easy on the eyes) */
+  .court-card .team-box.is-team1:not(.is-winner) .team-label,
+  .court-card .team-box.is-team1:not(.is-winner) .team-names span { color: #FFFFFF; }
+  .court-card .team-box.is-team2:not(.is-winner) .team-label { color: #6B5310; }
+  .court-card .team-box.is-team2:not(.is-winner) .team-names span { color: #33283B; }
+  /* Darker paddle on the lavender box so it doesn't blend in */
+  .court-card .team-box.is-team1 .pxp-paddle { fill: #4A3459; }
+  .court-card .team-box.is-team1 .pxp-paddle-edge { fill: #33233F; }
+}
+
+/* Bounce + swing in chunky steps; the two sides swing in turn like a rally */
+.pxp-body { animation: pxp-bounce 0.9s steps(2, jump-none) infinite; }
+.pxp-arm { transform-box: view-box; transform-origin: 7px 5px; animation: pxp-swing 0.9s steps(3, jump-none) infinite; }
+.pxp-slot .pxp-body, .pxp-slot .pxp-arm { animation-delay: calc(var(--pxp-i, 0) * -0.22s); }
+.pxp-team2 .pxp-body, .pxp-team2 .pxp-arm { animation-delay: calc(-0.45s + var(--pxp-i, 0) * -0.22s); }
+@keyframes pxp-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+/* Paddle rests upright in front, then swings forward (a forehand) — never back over the head */
+@keyframes pxp-swing { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(60deg); } }
+
+/* Winner: paddles up and a little victory hop */
+.team-box.is-winner .pxp-arm { animation: none; transform: none; } /* paddle held straight up */
+.team-box.is-winner .pxp-body { animation: pxp-cheer 0.6s steps(2, jump-none) infinite; }
+@keyframes pxp-cheer { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+/* Losing side stands still */
+.team-box.is-loser .pxp-body, .team-box.is-loser .pxp-arm { animation: none; }
+
+@media (max-width: 520px) {
+  .pxp-row { height: 36px; gap: 4px; }
+  .pxp-slot { width: 26px; height: 36px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pxp-body, .pxp-arm, .team-box.is-winner .pxp-body { animation: none; }
+}
+@media print { .pxp-row { display: none !important; } }
+
+/* =====================================================================
+   Pixel scene (hero + footer): small house, the pup playing fetch, a rally.
+   Logo colours: cream-gold pup, golden ears, plum outline, lavender scarf and roof.
+   ===================================================================== */
+/* Spans the full content width: house at the left edge, court at the right edge, standing on the line below
+   (the hero's stepped pixel edge, the footer's dashed divider) */
+.fetch-wrap { position: absolute; left: 0; right: 0; bottom: 32px; z-index: 2; pointer-events: none; }
+.footer-fetch { margin: 16px 0 0; }
+.px-fetch { display: flex; align-items: flex-end; gap: 12px; width: 100%; pointer-events: none; }
+.pxs-court { margin-left: auto; }
+/* Room for the scene below the hero content */
+body .hero-band { padding-bottom: 136px; }
+body.is-session .hero-band { padding-bottom: 128px; }
+.pxf-svg { display: block; width: 100%; height: 100%; overflow: visible; image-rendering: pixelated; }
+
+/* House */
+.pxs-house { display: block; width: 84px; height: 70px; flex: none; }
+.h-roof { fill: #A88FC2; } .h-wall { fill: #F3EDF7; } .h-trim { fill: #C9B5DC; }
+.h-win { fill: #6F527F; } .h-pane { fill: #C9B5DC; } .h-door { fill: #5E4766; } .h-knob { fill: #F7D774; } .h-heart { fill: #E9A6B6; }
+
+/* Yard: pup + ball */
+/* The yard fills all the space between the house and the court, so the pup runs right up to the players.
+   Positions use the yard's own width (cqw), so the run fits any screen. */
+.pxf-yard { --dog-w: 36px; --dog-h: 25px; --ball: 12px; --dur: 20s; /* pup smaller than the players, unhurried run */
+  /* Pup's two turning points (house side A, court side B) */
+  --x-dog-a: calc(var(--ball) + 26px); --x-dog-b: calc(100cqw - var(--ball) - var(--dog-w) - 20px);
+  /* The ball keeps a fixed 20px lead: right of the pup going out, left of the pup coming back */
+  --x-ball-ra: calc(var(--x-dog-a) + var(--dog-w) + 20px); --x-ball-rb: calc(var(--x-dog-b) + var(--dog-w) + 20px);
+  --x-ball-lb: calc(var(--x-dog-b) - (var(--x-dog-b) - var(--x-dog-a)) / 32 - 20px - var(--ball)); /* where the pup is 1% after turning home */
+  /* At the court the ball sits on the pup's head (over its face, which is ~72% along) */
+  --x-ball-head: calc(var(--x-dog-b) + var(--dog-w) * 0.72 - var(--ball) / 2); --y-ball-head: calc(4px - var(--dog-h));
+  /* At the house the pup faces left, so its head is on the other side */
+  --x-ball-head-home: calc(var(--x-dog-a) + var(--dog-w) * 0.28 - var(--ball) / 2); --x-ball-la: calc(var(--x-dog-a) - 20px - var(--ball));
+  position: relative; display: block; flex: 1 1 auto; min-width: 180px; height: 70px; container-type: inline-size; }
+.d-coat { fill: #FEE5AE; } .d-shade { fill: #F6C77F; } .d-dark { fill: #5E4766; }
+.d-tongue { fill: #F9A39A; } .d-scarf { fill: #C9B5DC; } .d-scarf2 { fill: #A88FC2; } .d-heart { fill: #FFFFFF; }
+.b-ball { fill: #EBD7B4; } .b-shade { fill: #D4B989; } .b-hole { fill: #FFF7E8; }
+.pxf-dog { position: absolute; left: 0; bottom: 0; width: var(--dog-w); height: var(--dog-h); animation: pxf-dog-x var(--dur) linear infinite; }
+.pxf-face { display: block; width: 100%; height: 100%; animation: pxf-face var(--dur) steps(1, end) infinite; }
+.pxf-legs { animation: pxf-step 0.3s steps(1, end) infinite; }
+.pxf-legs.b { animation-delay: -0.15s; }
+.pxf-tail { transform-box: view-box; transform-origin: 2.5px 5px; animation: pxf-wag 0.3s steps(2, jump-none) infinite; }
+.pxf-ball { position: absolute; left: 0; bottom: 0; width: var(--ball); height: 100%; animation: pxf-ball-x var(--dur) linear infinite; }
+.pxf-bob { position: absolute; left: 0; bottom: 4px; width: var(--ball); height: var(--ball); animation: pxf-bounce 0.5s steps(4, end) infinite alternate; }
+.pxf-shadow { position: absolute; left: 2px; bottom: 0; width: calc(var(--ball) - 4px); height: 2px; background: rgba(0, 0, 0, 0.3); animation: pxf-shadow var(--dur) steps(1, end) infinite; }
+/* No ground shadow while the ball is up on the pup's head */
+@keyframes pxf-shadow { 0% { opacity: 1; } 32.5% { opacity: 0; } 50.5% { opacity: 1; } 82.5%, 100% { opacity: 0; } }
+/* Out to the court (0-32%), play there (32-50%), trot home (50-82%), play at the house (82-100%) */
+@keyframes pxf-dog-x { 0% { transform: translateX(var(--x-dog-a)); } 32%, 50% { transform: translateX(var(--x-dog-b)); } 82%, 100% { transform: translateX(var(--x-dog-a)); } }
+@keyframes pxf-face { 0% { transform: scaleX(1); } 50%, 100% { transform: scaleX(-1); } }
+/* Same timing as the pup: out together (0-32%), on its head at the court (33-50%),
+   home together (51-82%), on its head at the house (83-100%), then sent out again */
+@keyframes pxf-ball-x {
+  0% { transform: translate(var(--x-ball-ra), 0); }
+  32% { transform: translate(var(--x-ball-rb), 0); }
+  /* at the court: the pup noses the ball up and keeps it bouncing on its head */
+  33%, 49.5% { transform: translate(var(--x-ball-head), var(--y-ball-head)); }
+  /* heads it back the other way and trots home behind it */
+  51% { transform: translate(var(--x-ball-lb), 0); }
+  82% { transform: translate(var(--x-ball-la), 0); }
+  /* at the house: same game, ball bouncing on its head */
+  83%, 99.9% { transform: translate(var(--x-ball-head-home), var(--y-ball-head)); }
+  100% { transform: translate(var(--x-ball-ra), 0); }
+}
+@keyframes pxf-bounce { from { transform: translateY(0); } to { transform: translateY(-16px); } }
+@keyframes pxf-step { 0% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes pxf-wag { 0%, 100% { transform: rotate(-20deg); } 50% { transform: rotate(20deg); } }
+
+/* Mini court: two players rallying */
+.pxs-court { display: block; width: 200px; height: 70px; flex: none; }
+.c-line { fill: #F3EDF7; } .c-net { fill: rgba(243, 237, 247, 0.6); } .c-post { fill: #F3EDF7; }
+/* Court players reuse the team-box sprite (.pxp-* colours and bounce/swing); paddle lightened so it shows on the dark banner */
+.pxs-court .pxp-paddle { fill: #C9B5DC; } .pxs-court .pxp-paddle-edge { fill: #A88FC2; } .pxs-court .pxp-paddle-hi { fill: #F3EDF7; }
+.pxs-court .pxp-floor { fill: rgba(0, 0, 0, 0.3); }
+.pxs-court .pxp-hair { fill: #A0714F; } /* lighter (light brown) hair so it shows on the dark banner */
+/* Swing in time with the rally: each player swings through as the ball reaches them */
+.pxs-court svg.cp { overflow: visible; } /* don't clip the paddle when it swings outside the player's frame */
+.pxs-court .pxp-arm { animation: pxp-swing 2.2s steps(3, jump-none) infinite; animation-delay: -1.1s; }
+.pxs-court .pxp-body { animation: pxp-bounce 1.1s steps(2, jump-none) infinite; animation-delay: 0s; }
+.pxs-court .cp-r .pxp-arm { animation-delay: 0s; }
+.pxs-court .cp-r .pxp-body { animation-delay: -0.55s; }
+.pr-ball { transform-box: view-box; animation: pr-rally 2.2s linear infinite; }
+/* Ball arcs from the yellow player's paddle, over the net, to the lavender player's paddle and back */
+/* Like real pickleball: the ball arcs over the net, bounces once on the other side, then rises to the paddle */
+@keyframes pr-rally {
+  /* gentle arcs: ease out of each hit and bounce, ease into the drop (no sharp snap at the bounce) */
+  0%, 100% { transform: translate(10.5px, 2px); animation-timing-function: cubic-bezier(0.39, 0.575, 0.565, 1); }
+  18% { transform: translate(20px, 0.5px); animation-timing-function: cubic-bezier(0.47, 0, 0.745, 0.715); }
+  34% { transform: translate(24.5px, 10.6px); animation-timing-function: cubic-bezier(0.39, 0.575, 0.565, 1); }
+  50% { transform: translate(27.5px, 2px); animation-timing-function: cubic-bezier(0.39, 0.575, 0.565, 1); }
+  68% { transform: translate(17.5px, 0.5px); animation-timing-function: cubic-bezier(0.47, 0, 0.745, 0.715); }
+  84% { transform: translate(13.5px, 10.6px); animation-timing-function: cubic-bezier(0.39, 0.575, 0.565, 1); }
+}
+
+@media (max-width: 760px) {
+  .pxs-court { display: none; } /* phones: house + pup only */
+  .pxs-house { width: 67px; height: 56px; }
+  .pxf-yard { --dog-w: 30px; --dog-h: 21px; --ball: 10px; --dur: 10s; height: 56px; }
+  body .hero-band { padding-bottom: 100px; }
+  /* Slim hero while sessions run: no room for the scene on phones */
+  body.is-session .fetch-wrap { display: none; }
+  body.is-session .hero-band { padding-bottom: 64px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pxf-dog, .pxf-face, .pxf-legs, .pxf-tail, .pxf-ball, .pxf-bob, .pxf-shadow, .pr-ball, .pxs-court .pxp-arm, .pxs-court .pxp-body { animation: none; }
+  .pxf-dog { transform: translateX(var(--x-dog-a)); }
+  .pxf-ball { transform: translateX(var(--x-ball-ra)); }
+  .pxf-legs.b { display: none; }
+  .pr-ball { transform: translate(19.5px, 0.5px); }
+}
+@media print { .px-fetch, .fetch-wrap, .footer-fetch { display: none !important; } }
 
 /* Clear All Sessions, below the last session */
 .sessions-footer { display: flex; justify-content: flex-end; margin-top: 24px; }
@@ -538,6 +729,13 @@ html[data-theme="dark"] .score-field input:focus,
 html[data-theme="dark"] .stepper:focus-within,
 html[data-theme="dark"] .player-name-field:focus-within { background: #0E0913; }
 html[data-theme="dark"] .score-field.is-winner input { background: var(--success-bg); border-color: var(--success-line); }
+/* Dark mode winner: a softer, muted sage instead of saturated green + bright mint (only inside a decided court card) */
+html[data-theme="dark"] .court-card.is-decided {
+  --success-bg: #33483C;
+  --success-fg: #A9D3BA;
+  --success-line: #557463;
+}
+html[data-theme="dark"].px-ui .court-card.is-decided { border-color: #6E9A82; }
 html[data-theme="dark"] .px-ui .field input[type="number"],
 html[data-theme="dark"] .px-ui .field input[type="text"],
 html[data-theme="dark"] .px-ui .field select,
@@ -649,6 +847,14 @@ html[data-theme="dark"] .theme-toggle .tt-moon { display: block; }
     box-shadow: 5px 5px 0 var(--win-border);
   }
   .px-ui .btn-win:active:not(:disabled) { box-shadow: 0 0 0 var(--win-border); }
+  /* "Who won?": a touch larger with a strong colour so it stands out in both themes, normal weight
+     (its invisible twin in the tools column picks this up too, so the buttons stay aligned) */
+  html.px-ui .court-card .decision-label { font-size: 0.8rem; font-weight: 400; }
+  html.px-ui:not([data-theme="dark"]) .court-card .decision-label { color: #3B2A47; }
+  html.px-ui[data-theme="dark"] .court-card .decision-label { color: #F3EDF7; }
+  /* Each win button wears its team's colours (same in light and dark mode) */
+  .px-ui .btn-win[data-team="team1"] { --win-bg: #7E6A93; --win-border: #3B2A47; --win-text: #FFFFFF; --win-hover-bg: #8C78A2; }
+  .px-ui .btn-win[data-team="team2"] { --win-bg: #F0E2B6; --win-border: #8A6B1F; --win-text: #33283B; --win-hover-bg: #F6EBCB; }
 }
 @media screen and (max-width: 767px) {
   .px-ui .btn-win, .px-ui .btn-win:hover:not(:disabled) { box-shadow: 2px 2px 0 var(--win-border); }

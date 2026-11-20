@@ -58,6 +58,9 @@ const App = (() => {
     Icons.hydrate(document);
     cacheEls();
     bindEvents();
+    // Every collapsible header shows a "Collapse" / "Expand" tooltip that follows its state
+    document.addEventListener('toggle', e => { if (e.target.tagName === 'DETAILS') syncCollapseTip(e.target); }, true);
+    document.querySelectorAll('details').forEach(syncCollapseTip);
     renderVoiceButton();
 
     Storage.migrateLegacy();
@@ -138,6 +141,7 @@ const App = (() => {
   function addSessionToPage(id, sessionState) {
     const root = el.sessionTemplate.content.firstElementChild.cloneNode(true);
     Icons.hydrate(root);
+    [root, ...root.querySelectorAll('details')].forEach(syncCollapseTip);
     const ctx = { id, state: sessionState, root, el: {} };
     const get = name => root.querySelector(`[data-el="${name}"]`);
     Object.assign(ctx.el, {
@@ -262,6 +266,13 @@ const App = (() => {
     on(ctx, e.btnExportStatsPdf, 'click', exportStatsPdf);
     on(ctx, e.btnClearHistory, 'click', onClearHistory);
     on(ctx, e.btnReset, 'click', onResetSession);
+  }
+
+  /** Tooltip on a collapsible's arrow only: "Collapse" while open, "Expand" while closed. */
+  function syncCollapseTip(details) {
+    const summary = details.querySelector(':scope > summary');
+    const arrow = summary && summary.querySelector(':scope > .session-head-chevron, :scope > .details-toggle > .details-chevron');
+    if (arrow) arrow.title = details.open ? 'Collapse' : 'Expand';
   }
 
   function cacheHtml(node) {
@@ -430,7 +441,7 @@ const App = (() => {
     el.btnVoice.addEventListener('click', toggleVoice);
     el.btnCancelSetup.addEventListener('click', () => pixelWipe(() => showView('sessions')));
     el.btnClearAll.addEventListener('click', onClearAllSessions);
-    el.btnClearAllTop.addEventListener('click', onClearAllSessions);
+    if (el.btnClearAllTop) el.btnClearAllTop.addEventListener('click', onClearAllSessions); // button is commented out for now
     el.btnToggleAll.addEventListener('click', () => {
       const open = ![...contexts.values()].some(ctx => ctx.root.open);
       contexts.forEach(ctx => { ctx.root.open = open; });
@@ -1621,7 +1632,7 @@ const App = (() => {
     el.btnToggleAll.textContent = [...contexts.values()].some(ctx => ctx.root.open) ? 'Collapse all' : 'Expand all';
     el.btnCancelSetup.hidden = count === 0;
     el.sessionsFooter.hidden = settingUp || count === 0;
-    el.btnClearAllTop.hidden = settingUp || count === 0;
+    if (el.btnClearAllTop) el.btnClearAllTop.hidden = settingUp || count === 0;
   }
 
   /** Delete every session (after confirming), behind the pixel wipe, and go back to setup. */
@@ -1922,18 +1933,46 @@ const App = (() => {
     el.courtsGrid.html = state.courts.map(renderCourtCard).join('');
   }
 
+  /* Pixel player sprite (12 x 17 grid, facing right). The arm + paddle swing and the body bounces via CSS. */
+  const PX_PLAYER = `<svg class="pxp" viewBox="0 -1 12 17" shape-rendering="crispEdges" aria-hidden="true" focusable="false">
+      <g class="pxp-body">
+        <rect class="pxp-hair" x="3" y="0" width="4" height="1"/><rect class="pxp-hair" x="2" y="1" width="1" height="2"/>
+        <rect class="pxp-skin" x="3" y="1" width="4" height="3"/><rect class="pxp-eye" x="6" y="2" width="1" height="1"/>
+        <rect class="pxp-shirt" x="3" y="4" width="4" height="5"/><rect class="pxp-skin" x="2" y="5" width="1" height="3"/>
+        <rect class="pxp-shorts" x="3" y="9" width="4" height="2"/>
+        <rect class="pxp-skin" x="3" y="11" width="1" height="3"/><rect class="pxp-skin" x="6" y="11" width="1" height="3"/>
+        <rect class="pxp-shoe" x="3" y="14" width="2" height="1"/><rect class="pxp-shoe" x="6" y="14" width="2" height="1"/>
+        <g class="pxp-arm">
+          <rect class="pxp-skin" x="7" y="5" width="3" height="1"/>
+          <!-- Pickleball paddle held upright: slim grip in the hand, taller-than-wide face above -->
+          <rect class="pxp-handle" x="9" y="3" width="1" height="2"/>
+          <rect class="pxp-paddle" x="8" y="0" width="3" height="3"/>
+          <rect class="pxp-paddle" x="9" y="-1" width="1" height="1"/>
+          <rect class="pxp-paddle-edge" x="8" y="-1" width="1" height="1"/><rect class="pxp-paddle-edge" x="10" y="-1" width="1" height="1"/>
+          <rect class="pxp-paddle-hi" x="9" y="0" width="1" height="2"/>
+        </g>
+      </g>
+      <rect class="pxp-floor" x="2" y="15" width="7" height="1"/>
+    </svg>`;
+
+  /** One pixel player per person on the team (1 in singles, 2 in doubles). */
+  function teamSprites(count, team) {
+    return `<div class="pxp-row pxp-${team}" aria-hidden="true">${Array.from({ length: count }, (_, i) => `<span class="pxp-slot" style="--pxp-i:${i}">${PX_PLAYER}</span>`).join('')}</div>`;
+  }
+
   function renderTeam(ids, team, m, isDoubles) {
     const fixed = isDoubles && isFixedPairTeam(ids);
     const isWinner = m.winner === team;
     const isLoser = !!m.winner && !isWinner;
     const label = team === 'team1' ? 'Team 1' : 'Team 2';
     return `
-      <div class="team-box${isWinner ? ' is-winner' : ''}${isLoser ? ' is-loser' : ''}">
+      <div class="team-box is-${team}${isWinner ? ' is-winner' : ''}${isLoser ? ' is-loser' : ''}">
         <div class="team-label">
           <span>${label}</span>
           ${fixed ? `<span class="pair-tag" title="Fixed partners">${Icons.svg('link')}Fixed pair</span>` : ''}
           ${isWinner ? `<span class="winner-tag">${Icons.svg('trophy')}Winner</span>` : ''}
         </div>
+        ${teamSprites(ids.length, team)}
         <div class="team-names">${ids.map(id => `<span>${escapeHtml(playerName(id))}</span>`).join('')}</div>
       </div>`;
   }
@@ -2009,6 +2048,7 @@ const App = (() => {
 
     const tools = `
       <div class="court-tools">
+        <span class="decision-label tools-spacer" aria-hidden="true">&nbsp;</span>
         <button type="button" class="btn btn-secondary btn-tool" data-action="open-swap" data-court-id="${court.id}">${Icons.svg('swap')}Swap Players</button>
         <button type="button" class="btn btn-secondary btn-tool" data-action="open-pairing" data-court-id="${court.id}">${Icons.svg('pencil')}Edit Pairing</button>
       </div>`;

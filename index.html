@@ -24,8 +24,8 @@
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 })();
 </script>
-<link rel="stylesheet" href="css/style.css?v=95" />
-<link rel="stylesheet" href="css/pixel.css?v=103" />
+<link rel="stylesheet" href="css/style.css?v=98" />
+<link rel="stylesheet" href="css/pixel.css?v=146" />
 </head>
 <body>
 <script>
@@ -136,6 +136,8 @@
       </svg>
     </div>
   </div>
+  <!-- Pickle sa Balay's pup playing fetch with a pickleball (drawn by site.js) -->
+  <div class="px-container fetch-wrap"><div class="px-fetch" data-px-fetch aria-hidden="true"></div></div>
 </section>
 
 <div class="app">
@@ -146,8 +148,10 @@
       <div class="sessions-toolbar-actions">
         <button type="button" class="btn btn-secondary btn-sm" id="btn-voice" aria-pressed="true" title="Automatically say the winners and score when a match is completed" hidden></button>
         <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-all">Collapse all</button>
-        <button type="button" class="btn btn-danger btn-sm" id="btn-clear-all-top"><span data-icon="trash"></span>Clear All Sessions</button>
         <button type="button" class="btn btn-primary btn-sm" id="btn-new-session"><span data-icon="plus"></span>New Session</button>
+        <!-- Hidden for now: Clear all sessions (trash icon) beside New Session
+        <button type="button" class="btn btn-danger btn-sm btn-icon-only" id="btn-clear-all-top" title="Clear all sessions" aria-label="Clear all sessions"><span data-icon="trash"></span></button>
+        -->
       </div>
     </div>
 
@@ -292,8 +296,8 @@
             <!-- Waiting queue -->
             <details class="panel details-panel panel-queue" data-el="waiting-card" open>
               <summary class="panel-head details-summary">
-                <h2 class="panel-title"><span class="panel-icon" data-icon="users"></span>Waiting Queue</h2>
-                <span class="details-toggle"><span class="badge badge-neutral" data-el="queue-count"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
+                <h2 class="panel-title"><span class="panel-icon" data-icon="users"></span><span class="panel-title-stack">Waiting Queue<span class="badge badge-neutral panel-subcount" data-el="queue-count"></span></span></h2>
+                <span class="details-toggle"><span class="details-chevron" data-icon="chevronDown"></span></span>
               </summary>
               <div class="details-body">
               <div class="panel-head-actions queue-actions">
@@ -332,7 +336,7 @@
             <details class="panel details-panel panel-stats" data-el="stats-card" open>
               <summary class="panel-head details-summary">
                 <h2 class="panel-title"><span class="panel-icon" data-icon="chart"></span>Player Statistics</h2>
-                <span class="details-toggle"><span class="details-toggle-text"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
+                <span class="details-toggle"><span class="details-chevron" data-icon="chevronDown"></span></span>
               </summary>
               <div class="details-body">
                 <div class="stats-actions no-print">
@@ -359,8 +363,8 @@
             <!-- Player management -->
             <details class="panel details-panel panel-players" data-el="players-card" open>
               <summary class="panel-head details-summary">
-                <h2 class="panel-title"><span class="panel-icon" data-icon="userCog"></span>Player Management</h2>
-                <span class="details-toggle"><span class="badge badge-neutral" data-el="pm-count"></span><span class="details-chevron" data-icon="chevronDown"></span></span>
+                <h2 class="panel-title"><span class="panel-icon" data-icon="userCog"></span><span class="panel-title-stack">Player Management<span class="badge badge-neutral panel-subcount" data-el="pm-count"></span></span></h2>
+                <span class="details-toggle"><span class="details-chevron" data-icon="chevronDown"></span></span>
               </summary>
               <div class="details-body">
                 <div class="pm-toolbar">
@@ -488,6 +492,7 @@
         </a>
       </div>
     </div>
+    <div class="footer-fetch"><div class="px-fetch" data-px-fetch aria-hidden="true"></div></div>
     <div class="footer-bottom">
       <span>© <span data-year>2026</span> Pickleball Open Play · Sponsored by Pickle sa Balay</span>
       <button type="button" class="footer-top" data-footer-top>Back to top <span aria-hidden="true">▲</span></button>
@@ -523,7 +528,7 @@
 <script src="js/storage.js?v=94"></script>
 <script src="js/session.js?v=94"></script>
 <script src="js/pdf.js?v=94"></script>
-<script src="js/app.js?v=98"></script>
-<script src="js/site.js?v=94"></script>
+<script src="js/app.js?v=107"></script>
+<script src="js/site.js?v=100"></script>
 </body>
 </html>
