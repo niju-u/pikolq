@@ -1063,25 +1063,52 @@ const App = (() => {
     return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
   }
 
-  // Each session has its own announcer voice (saved on this device). Until one is chosen, it uses
-  // Microsoft Mark if the device has it, otherwise the browser's default voice.
+  // Each session has its own announcer voice, speed and pitch (saved on this device). Until a voice is chosen
+  // it uses Microsoft Mark if the device has it, otherwise the device's best English voice (see preferredVoice).
+  // Websites can use every voice the device has installed, including Apple's downloadable Enhanced and Premium
+  // voices on iPhone, iPad and Mac; Apple keeps the Siri voices for its own apps, so no website can use those.
   const VOICE_NAME = 'Microsoft Mark';
-  const VOICE_RATE = 1;
-  const VOICE_PITCH = 1.6;
+  const VOICE_RATE = 1;     // default speed
+  const VOICE_PITCH = 1.6;  // default pitch
   // Voices have no gender field, so female voices are picked out by common names
   const FEMALE_VOICE_HINT = /zira|aria|jenny|samantha|\bava\b|zoe|allison|susan|hazel|sonia|libby|michelle|karen|moira|tessa|fiona|victoria|female/i;
+  // The most natural voices: Apple's downloaded Enhanced / Premium voices, Microsoft and Google's natural voices
+  const NATURAL_VOICE_HINT = /\((premium|enhanced)\)|natural|neural/i;
+  // Apple's novelty voices (bells, whispers, robots): fine for fun, poor for announcing names
+  const FUN_VOICE_HINT = /^(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|kathy|ralph)\b/i;
+  const isAppleDevice = /Mac|iPhone|iPad|iPod/.test(navigator.platform || '') || /iPhone|iPad|Macintosh/.test(navigator.userAgent || '');
 
   /** The active session's saved voice name, '' for the device default, or null if none was chosen. */
   function sessionVoiceName() {
     return active ? Storage.getPref(`voice_${active.id}`, null) : null;
   }
 
-  /** Find a voice by name. '' means the device default; a missing voice falls back to Microsoft Mark. */
+  /** The active session's speed and pitch (or the defaults). */
+  function sessionVoiceTuning() {
+    const num = (key, fallback) => {
+      const v = active ? parseFloat(Storage.getPref(`${key}_${active.id}`, '')) : NaN;
+      return Number.isFinite(v) ? v : fallback;
+    };
+    return { rate: num('voicerate', VOICE_RATE), pitch: num('voicepitch', VOICE_PITCH) };
+  }
+
+  /** The voice used until one is chosen: Microsoft Mark, else the most natural English voice
+   *  (an Apple Premium / Enhanced voice if downloaded), else Samantha on Apple devices, else the device default. */
+  function preferredVoice(voices) {
+    const english = voices.filter(v => /^en/i.test(v.lang) && !FUN_VOICE_HINT.test(v.name));
+    return voices.find(v => v.name.includes(VOICE_NAME))
+      || english.find(v => /\(premium\)/i.test(v.name))
+      || english.find(v => NATURAL_VOICE_HINT.test(v.name))
+      || english.find(v => /^samantha\b/i.test(v.name))
+      || null;
+  }
+
+  /** Find a voice by name. '' means the device default; no choice or a missing voice uses preferredVoice. */
   function findVoice(name) {
     // The voice list can fill in after the page loads, so look it up each time
     if (name === '') return null;
     const voices = speech.getVoices();
-    return voices.find(v => v.name === name) || voices.find(v => v.name.includes(VOICE_NAME)) || null;
+    return voices.find(v => v.name === name) || preferredVoice(voices);
   }
 
   // Lines are spoken one at a time from our own queue, so a line can be followed by a pause.
@@ -1097,11 +1124,11 @@ const App = (() => {
   }
 
   /** Add lines to speak: [{ text, pause }] where pause is milliseconds of silence after the line.
-   *  The voice is the active session's, fixed now so a later session switch doesn't change it. */
-  function speakLines(lines, interrupt = false, voiceName = sessionVoiceName()) {
+   *  The voice, speed and pitch are the active session's, fixed now so a later session switch doesn't change them. */
+  function speakLines(lines, interrupt = false, voiceName = sessionVoiceName(), tuning = sessionVoiceTuning()) {
     if (!speech) return;
     if (interrupt) stopSpeaking();
-    speechQueue.push(...lines.filter(l => l && l.text).map(l => ({ voiceName, ...l })));
+    speechQueue.push(...lines.filter(l => l && l.text).map(l => ({ voiceName, rate: tuning.rate, pitch: tuning.pitch, ...l })));
     if (!speechBusy) speakNextLine();
   }
 
@@ -1120,16 +1147,17 @@ const App = (() => {
       setTimeout(() => { if (run === speechRun) speakNextLine(); }, line.pause || 0);
     };
     const utterance = new SpeechSynthesisUtterance(line.text);
-    const voice = findVoice(line.voiceName);
-    if (voice) utterance.voice = voice;
+    let voice = findVoice(line.voiceName);
+    // A browser can refuse a voice; fall back to the device default instead of stalling the queue
+    try { if (voice) utterance.voice = voice; } catch (err) { voice = null; }
     utterance.lang = voice ? voice.lang : speechLang;
-    utterance.rate = VOICE_RATE;
-    utterance.pitch = VOICE_PITCH;
+    utterance.rate = line.rate;
+    utterance.pitch = line.pitch;
     utterance.onend = finish;
     utterance.onerror = finish;
     speech.speak(utterance);
     // Some browsers never report the end of a line; don't let the queue get stuck
-    setTimeout(finish, 3000 + line.text.length * 150);
+    setTimeout(finish, (3000 + line.text.length * 150) / Math.max(0.5, line.rate || 1));
   }
 
   /** When a match is completed: the winners, and the score if one was recorded. This is the only automatic
@@ -1190,17 +1218,31 @@ const App = (() => {
     let selected = currentVoice ? currentVoice.name : '';
     // Start with all languages shown only if the current voice isn't English
     let showAll = !!currentVoice && !/^en/i.test(currentVoice.lang);
+    const tuning = sessionVoiceTuning();
 
     const buildOptions = () => {
       const english = voices.filter(v => /^en/i.test(v.lang));
-      const list = showAll || !english.length ? voices : english;
-      const opt = v => `<option value="${escapeHtml(v.name)}"${v.name === selected ? ' selected' : ''}>${escapeHtml(v.name)}</option>`;
-      const female = list.filter(v => FEMALE_VOICE_HINT.test(v.name));
-      const other = list.filter(v => !FEMALE_VOICE_HINT.test(v.name));
+      const list = (showAll || !english.length ? voices : english).slice()
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const opt = v => `<option value="${escapeHtml(v.name)}"${v.name === selected ? ' selected' : ''}>${escapeHtml(v.name)}${showAll ? ` · ${escapeHtml(v.lang)}` : ''}</option>`;
+      // Most natural first (Apple Premium / Enhanced, natural voices), Apple's novelty voices last
+      const natural = list.filter(v => NATURAL_VOICE_HINT.test(v.name));
+      const fun = list.filter(v => !natural.includes(v) && FUN_VOICE_HINT.test(v.name));
+      const rest = list.filter(v => !natural.includes(v) && !fun.includes(v));
+      const female = rest.filter(v => FEMALE_VOICE_HINT.test(v.name));
+      const other = rest.filter(v => !FEMALE_VOICE_HINT.test(v.name));
+      const group = (label, vs) => (vs.length ? `<optgroup label="${label}">${vs.map(opt).join('')}</optgroup>` : '');
       return `<option value=""${selected === '' ? ' selected' : ''}>Device default voice</option>`
-        + (female.length ? `<optgroup label="Female voices (guessed from the name)">${female.map(opt).join('')}</optgroup>` : '')
-        + (other.length ? `<optgroup label="Other voices">${other.map(opt).join('')}</optgroup>` : '');
+        + group('Most natural voices', natural)
+        + group('Female voices (guessed from the name)', female)
+        + group('Other voices', other)
+        + group('Fun voices', fun);
     };
+    const appleHelp = isAppleDevice
+      ? `<p class="hint"><strong>iPhone / iPad:</strong> Settings → Accessibility → Spoken Content → Voices → English, then download an <em>Enhanced</em> or <em>Premium</em> voice (e.g. Ava, Zoe, Evan).
+         <strong>Mac:</strong> System Settings → Accessibility → Spoken Content → System Voice → Manage Voices.
+         Reopen this page afterwards and the new voice appears under “Most natural voices”. Siri’s own voices can’t be used by websites; Apple keeps them for its own apps.</p>`
+      : '';
 
     openModal({
       title: 'Announcer Voice',
@@ -1215,12 +1257,24 @@ const App = (() => {
             <input type="checkbox" id="m-voice-all" ${showAll ? 'checked' : ''} />
             <span class="choice-name">Show voices for all languages</span>
           </label>
+          <label class="field">
+            <span class="field-label">Speed <span id="m-voice-rate-val">${tuning.rate.toFixed(2)}×</span></span>
+            <input type="range" id="m-voice-rate" min="0.6" max="1.5" step="0.05" value="${tuning.rate}" />
+          </label>
+          <label class="field">
+            <span class="field-label">Pitch <span id="m-voice-pitch-val">${tuning.pitch.toFixed(1)}</span></span>
+            <input type="range" id="m-voice-pitch" min="0.5" max="2" step="0.1" value="${tuning.pitch}" />
+            <span class="hint">Natural voices usually sound best near 1.0.</span>
+          </label>
           <button type="button" class="btn btn-secondary" data-modal-action="test-voice">${Icons.svg('volume')}Test voice</button>
-          <p class="hint">Every session can have its own voice. Your choice is saved on this device only, and each device has its own voices.</p>
+          <p class="hint">Every session can have its own voice, speed and pitch. Your choice is saved on this device only, and each device has its own voices.</p>
+          ${appleHelp}
         </div>`,
       onChange: () => {
         const select = q('#m-voice');
         selected = select.value;
+        q('#m-voice-rate-val').textContent = `${parseFloat(q('#m-voice-rate').value).toFixed(2)}×`;
+        q('#m-voice-pitch-val').textContent = parseFloat(q('#m-voice-pitch').value).toFixed(1);
         const wantAll = q('#m-voice-all').checked;
         if (wantAll !== showAll) {
           showAll = wantAll;
@@ -1233,11 +1287,14 @@ const App = (() => {
         if (action !== 'test-voice') return;
         const [a, b] = state.players.filter(Queue.isActive).map(p => p.name);
         const who = b ? `${a} and ${b}` : (a || 'the team');
-        speakLines([{ text: `Congratulations to the winners, ${who}. The score was 11 to 7.` }], true, q('#m-voice').value);
+        const testTuning = { rate: parseFloat(q('#m-voice-rate').value), pitch: parseFloat(q('#m-voice-pitch').value) };
+        speakLines([{ text: `Congratulations to the winners, ${who}. The score was 11 to 7.` }], true, q('#m-voice').value, testTuning);
       },
       onSave: () => {
         const name = q('#m-voice').value;
         Storage.setPref(`voice_${active.id}`, name);
+        Storage.setPref(`voicerate_${active.id}`, q('#m-voice-rate').value);
+        Storage.setPref(`voicepitch_${active.id}`, q('#m-voice-pitch').value);
         stopSpeaking();
         showToast(`Voice for “${state.name}”: ${name || 'device default'}.`);
         return null;
