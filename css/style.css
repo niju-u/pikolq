@@ -1424,6 +1424,9 @@ main {
 
 .field-label { font-size: 0.8rem; font-weight: 700; color: var(--text-2); }
 
+/* Sliders (e.g. announcer speed and pitch) in the site colour */
+.field input[type="range"] { width: 100%; accent-color: var(--plum); cursor: pointer; }
+
 .field input[type="number"],
 .field input[type="text"],
 .field select {

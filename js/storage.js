@@ -98,6 +98,8 @@ const Storage = (() => {
     writeList(listSessions().filter(s => s.id !== id));
     safe(() => localStorage.removeItem(`pbq_pref_open_${id}`), undefined);
     safe(() => localStorage.removeItem(`pbq_pref_voice_${id}`), undefined);
+    safe(() => localStorage.removeItem(`pbq_pref_voicerate_${id}`), undefined);
+    safe(() => localStorage.removeItem(`pbq_pref_voicepitch_${id}`), undefined);
     safe(() => localStorage.removeItem(`pbq_pref_rank_${id}`), undefined);
   }
 
