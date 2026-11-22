@@ -63,6 +63,7 @@ const App = (() => {
     document.querySelectorAll('details').forEach(syncCollapseTip);
     keepHeaderInPlaceOnToggle();
     renderVoiceButton();
+    setTimeout(warmBtVoice, 2500); // Bluetooth voice: load it in the background once the page has settled
 
     Storage.migrateLegacy();
     // Open each session on its own, so one that fails can't hide the others (its saved data is left alone)
@@ -1139,21 +1140,40 @@ const App = (() => {
     return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
   }
 
+  /** The page's one <audio> element: it loops the wake-up sound, and in Bluetooth mode it also plays each spoken line.
+   *  Using one element matters on iPhone: once it has played from a tap, it may keep playing later clips without a tap. */
+  let silentUrl = null;
+  function voiceAudio() {
+    if (!wakeAudio) {
+      silentUrl = wakeSoundUrl();
+      wakeAudio = new Audio(silentUrl);
+      wakeAudio.loop = true;
+      wakeAudio.setAttribute('playsinline', '');
+    }
+    return wakeAudio;
+  }
+
+  /** Switch the element back to the looping wake-up sound (after a spoken clip), and play it if asked. */
+  function backToSilence(play) {
+    const a = voiceAudio();
+    a.onended = null;
+    a.onerror = null;
+    if (a.src !== silentUrl) { a.src = silentUrl; a.playbackRate = 1; }
+    a.loop = true;
+    wakeLastAt = Date.now();
+    if (play) {
+      const p = a.play();
+      if (p && p.catch) p.catch(() => {}); // blocked or unsupported: the voice still speaks, just without the wake-up
+    }
+  }
+
   /** Start (or keep) the wake-up sound. Returns true if the speaker was likely asleep. */
   function wakeSpeaker() {
     clearTimeout(wakeStop);
     // Still playing (a new announcement interrupted the last one) or played moments ago: the speaker is awake
     const playing = !!wakeAudio && !wakeAudio.paused;
     const asleep = !playing && Date.now() - wakeLastAt > AWAKE_FOR_MS;
-    try {
-      if (!wakeAudio) {
-        wakeAudio = new Audio(wakeSoundUrl());
-        wakeAudio.loop = true;
-        wakeAudio.setAttribute('playsinline', '');
-      }
-      const p = wakeAudio.play();
-      if (p && p.catch) p.catch(() => {}); // blocked or unsupported: the voice still speaks, just without the wake-up
-    } catch (err) { /* no audio support: speak anyway */ }
+    try { backToSilence(true); } catch (err) { /* no audio support: speak anyway */ }
     wakeLastAt = Date.now();
     return asleep;
   }
@@ -1168,20 +1188,325 @@ const App = (() => {
     }, 1500);
   }
 
+  // ---------- Bluetooth voice ----------
+  // iPhone treats website speech (speechSynthesis) as system speech and always plays it on the phone itself.
+  // In Bluetooth mode each line is turned into an audio clip on the phone (a Piper voice, run in a background
+  // worker: js/tts-worker.js) and played like music, so it goes to whatever speaker the phone uses for media.
+  // Downloaded once, then offline. If a clip can't be made, that line uses the phone's own voice.
+  const BT_VOICES = [
+    { id: 'en_US-lessac-medium', label: 'Lessac · US English, woman', path: 'en/en_US/lessac/medium/en_US-lessac-medium.onnx' },
+    { id: 'en_US-amy-medium', label: 'Amy · US English, woman', path: 'en/en_US/amy/medium/en_US-amy-medium.onnx' },
+    { id: 'en_US-ryan-medium', label: 'Ryan · US English, man', path: 'en/en_US/ryan/medium/en_US-ryan-medium.onnx' },
+  ];
+  const VOICE_BASE = 'https://huggingface.co/diffusionstudio/piper-voices/resolve/main/'; // the engine reads voices from here
+  const TTS_CACHE = 'pikolq-voice-v1'; // the same cache the engine reads its voice files from
+  const ORT_WASM = 'https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.18.0/';
+  const PIPER_WASM = 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize';
+  const BT_DOWNLOAD_MB = 93; // voice (63 MB) + speech engine (30 MB), downloaded once
+  const savedBtVoice = Storage.getPref('btvoice', '');
+  let btVoiceId = BT_VOICES.some(v => v.id === savedBtVoice) ? savedBtVoice : '';
+  const TTS_WORKER_URL = 'js/tts-worker.js?v=1';
+  let ttsWorker = null; // background worker that makes the clips (false if this browser can't run it)
+  let ttsWorkerVoice = null; // the voice the worker has loaded (or is loading)
+  let ttsWorkerReady = null; // promise for that load
+  let ttsMsgId = 0;
+  const ttsPending = new Map(); // worker message id -> { resolve, reject }
+  const readyVoices = new Set(); // voices known to be fully downloaded
+  const clipJobs = { now: [], later: [] }; // clips waiting to be made: taps first, then preparation
+  let clipBusy = false;
+  let btDownload = null; // { voiceId, promise, loaded, listeners } while a download runs
+  let btFailNoted = false;
+  const clipCache = new Map(); // "voice|text" -> Promise of an object URL (most recently used last)
+
+  /** The files a voice needs (with their approximate size), each kept in the cache under its download URL. */
+  function btFiles(voiceId) {
+    const model = VOICE_BASE + BT_VOICES.find(v => v.id === voiceId).path;
+    return [
+      { url: model, type: 'application/octet-stream', mb: 63.2 },
+      { url: `${model}.json`, type: 'application/json', mb: 0.01 },
+      { url: `${PIPER_WASM}.wasm`, type: 'application/wasm', mb: 0.6 },
+      { url: `${PIPER_WASM}.data`, type: 'application/octet-stream', mb: 18.1 },
+      { url: `${ORT_WASM}ort-wasm-simd.wasm`, type: 'application/wasm', mb: 10.6 },
+    ];
+  }
+
+  /** True when every file for this voice is already saved on this device. */
+  async function btVoiceReady(voiceId) {
+    if (readyVoices.has(voiceId)) return true;
+    try {
+      const cache = await caches.open(TTS_CACHE);
+      for (const f of btFiles(voiceId)) if (!(await cache.match(f.url))) return false;
+      readyVoices.add(voiceId);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  /** Download (once) everything a voice needs. onProgress(megabytes so far) while it runs. */
+  function downloadBtVoice(voiceId, onProgress) {
+    if (btDownload && btDownload.voiceId === voiceId) {
+      if (onProgress) btDownload.listeners.push(onProgress);
+      return btDownload.promise;
+    }
+    const job = { voiceId, loaded: 0, listeners: onProgress ? [onProgress] : [] };
+    const tell = mb => { job.loaded = mb; job.listeners.forEach(fn => fn(mb)); };
+    job.promise = (async () => {
+      const cache = await caches.open(TTS_CACHE);
+      let done = 0;
+      for (const f of btFiles(voiceId)) {
+        if (await cache.match(f.url)) { done += f.mb * 1e6; tell(done / 1e6); continue; } // already saved: count its size without reading it
+        const res = await fetch(f.url);
+        if (!res.ok || !res.body) throw new Error(`Download failed (${res.status})`);
+        const reader = res.body.getReader();
+        const parts = [];
+        let got = 0;
+        for (;;) {
+          const { done: end, value } = await reader.read();
+          if (end) break;
+          parts.push(value);
+          got += value.length;
+          tell((done + got) / 1e6);
+        }
+        await cache.put(f.url, new Response(new Blob(parts, { type: f.type }), { headers: { 'Content-Type': f.type } }));
+        done += got;
+      }
+    })();
+    const clear = () => { if (btDownload === job) btDownload = null; };
+    job.promise.then(clear, clear);
+    btDownload = job;
+    return job.promise;
+  }
+
+  /** Start the background worker (once). Returns it, or false if this browser can't run it. */
+  function startTtsWorker() {
+    if (ttsWorker !== null) return ttsWorker;
+    try {
+      ttsWorker = new Worker(new URL(TTS_WORKER_URL, document.baseURI), { type: 'module' });
+      ttsWorker.onmessage = e => {
+        const m = e.data || {};
+        const waiting = ttsPending.get(m.id);
+        if (!waiting) return;
+        ttsPending.delete(m.id);
+        if (m.ok) waiting.resolve(m); else waiting.reject(new Error(m.error));
+      };
+      ttsWorker.onerror = e => {
+        if (e && e.preventDefault) e.preventDefault();
+        ttsWorkerFailed(new Error((e && e.message) || 'The voice worker could not start'));
+      };
+    } catch (err) {
+      ttsWorker = false;
+    }
+    return ttsWorker;
+  }
+
+  /** The worker can't run here (a very old browser): from now on the phone's own voice is used. */
+  function ttsWorkerFailed(err) {
+    console.warn('Bluetooth voice worker:', err);
+    if (ttsWorker) ttsWorker.terminate();
+    ttsWorker = false;
+    ttsWorkerVoice = null;
+    ttsWorkerReady = null;
+    ttsPending.forEach(w => w.reject(err));
+    ttsPending.clear();
+  }
+
+  function workerCall(msg) {
+    return new Promise((resolve, reject) => {
+      const id = ++ttsMsgId;
+      ttsPending.set(id, { resolve, reject });
+      ttsWorker.postMessage(Object.assign({}, msg, { id }));
+    });
+  }
+
+  /** Make one clip (a WAV blob) in the background worker. */
+  async function synthClip(voiceId, text) {
+    if (!(await btVoiceReady(voiceId))) {
+      // Not on this device (yet, or the phone cleared it): don't make an announcement wait for a big download.
+      // Fetch it in the background; this announcement uses the phone's own voice.
+      downloadBtVoice(voiceId).then(() => { if (btVoiceId === voiceId) warmBtVoice(); }, () => {});
+      throw new Error('The Bluetooth voice is not downloaded on this device');
+    }
+    if (!startTtsWorker()) throw new Error('This browser can’t run the Bluetooth voice');
+    if (ttsWorkerVoice !== voiceId || !ttsWorkerReady) {
+      ttsWorkerVoice = voiceId;
+      const loading = workerCall({ type: 'init', voiceId, ortBase: ORT_WASM, piperBase: PIPER_WASM });
+      ttsWorkerReady = loading;
+      loading.catch(() => { if (ttsWorkerReady === loading) { ttsWorkerVoice = null; ttsWorkerReady = null; } });
+    }
+    await ttsWorkerReady;
+    const m = await workerCall({ type: 'predict', text });
+    return new Blob([m.buf], { type: 'audio/wav' });
+  }
+
+  /** The spoken clip for a line (a promise of an object URL), made once and remembered.
+   *  urgent: someone tapped and is waiting, so it goes ahead of clips being prepared in advance. */
+  function clipFor(voiceId, text, urgent = true) {
+    const key = `${voiceId}|${text}`;
+    const known = clipCache.get(key);
+    if (known) {
+      clipCache.delete(key);
+      clipCache.set(key, known); // most recently used last
+      if (urgent && known.job) {
+        const i = clipJobs.later.indexOf(known.job);
+        if (i >= 0) { clipJobs.later.splice(i, 1); clipJobs.now.push(known.job); }
+      }
+      return known.promise;
+    }
+    let resolve, reject;
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    const entry = { promise, job: { voiceId, text, key, resolve, reject } };
+    clipCache.set(key, entry);
+    promise.then(() => { entry.job = null; }, () => { if (clipCache.get(key) === entry) clipCache.delete(key); });
+    (urgent ? clipJobs.now : clipJobs.later).push(entry.job);
+    trimClipCache();
+    pumpClips();
+    return promise;
+  }
+
+  /** Keep memory small: forget the oldest finished clips. */
+  function trimClipCache() {
+    for (const [key, entry] of clipCache) {
+      if (clipCache.size <= 80) break;
+      if (entry.job) continue; // still waiting to be made
+      clipCache.delete(key);
+      entry.promise.then(url => URL.revokeObjectURL(url), () => {});
+    }
+  }
+
+  /** Make the waiting clips one at a time: taps first, then preparation. */
+  async function pumpClips() {
+    if (clipBusy) return;
+    const job = clipJobs.now.shift() || clipJobs.later.shift();
+    if (!job) return;
+    clipBusy = true;
+    try {
+      job.resolve(URL.createObjectURL(await synthClip(job.voiceId, job.text)));
+    } catch (err) {
+      job.reject(err);
+    } finally {
+      clipBusy = false;
+      pumpClips();
+    }
+  }
+
+  // ---------- Bluetooth voice: preparing announcements in advance ----------
+  // While matches are on, the lines someone might announce next are made in the background,
+  // so tapping Announce (or completing a match) plays at once instead of waiting for the clip.
+  const prepareFor = new Set(); // sessions changed since the last preparation
+  let prepareTimer = null;
+
+  /** Called after a session is drawn: prepare its lines a moment later (after quick runs of changes settle). */
+  function schedulePrepare() {
+    if (!btVoiceId || !active) return;
+    prepareFor.add(active);
+    clearTimeout(prepareTimer);
+    prepareTimer = setTimeout(prepareAnnouncements, 700);
+  }
+
+  /** The lines that could be announced next in the active session. */
+  function likelyLines() {
+    const texts = ['Currently playing.'];
+    state.courts.forEach(c => {
+      if (!c.activeMatch) return;
+      texts.push(courtLine(c).text);
+      texts.push(winnersLine(c.activeMatch.team1), winnersLine(c.activeMatch.team2));
+    });
+    const next = nextUpText();
+    if (next) texts.push(next);
+    return texts;
+  }
+
+  function prepareAnnouncements() {
+    const voiceId = btVoiceId;
+    if (!voiceId) { prepareFor.clear(); return; }
+    if (!readyVoices.has(voiceId)) { // only once the voice is on this device (the check is quick, but not instant)
+      btVoiceReady(voiceId).then(ready => { if (ready) prepareAnnouncements(); else prepareFor.clear(); });
+      return;
+    }
+    const before = active;
+    const wanted = new Set();
+    prepareFor.forEach(ctx => {
+      if (!contexts.has(ctx.id)) return;
+      activate(ctx);
+      likelyLines().forEach(t => wanted.add(t));
+    });
+    prepareFor.clear();
+    if (before) activate(before);
+    // Drop preparation that's no longer needed (the queue moved on), then queue what is
+    clipJobs.later = clipJobs.later.filter(job => {
+      if (job.voiceId === voiceId && wanted.has(job.text)) return true;
+      job.reject(new Error('No longer needed'));
+      return false;
+    });
+    wanted.forEach(t => clipFor(voiceId, t, false));
+  }
+
+  /** Play one line as a clip through the <audio> element; uses the phone's voice if the clip can't be made or played. */
+  function playClipLine(line, run, finish) {
+    let settled = false;
+    const fallback = err => {
+      if (settled || run !== speechRun) return;
+      settled = true;
+      if (!btFailNoted) {
+        btFailNoted = true;
+        showToast('The Bluetooth voice isn’t ready on this device, so the phone’s own voice is used for now.');
+      }
+      if (err) console.warn('Bluetooth voice:', err);
+      backToSilence(true);
+      speakWithPhoneVoice(line, finish);
+    };
+    clipFor(line.bt, line.text).then(url => {
+      if (run !== speechRun) return;
+      const a = voiceAudio();
+      clearTimeout(wakeStop);
+      a.loop = false;
+      a.src = url;
+      a.playbackRate = Math.min(2, Math.max(0.5, line.rate || 1));
+      const end = () => {
+        if (settled) return;
+        settled = true;
+        if (run === speechRun) backToSilence(true); // keep the speaker awake until the next line
+        finish();
+      };
+      a.onended = end;
+      a.onerror = () => fallback(new Error('The clip could not play'));
+      const p = a.play();
+      if (p && p.catch) p.catch(fallback);
+      // A clip that never reports its end must not stall the queue
+      setTimeout(end, (4000 + line.text.length * 120) / a.playbackRate);
+    }, fallback);
+  }
+
+  /** Load the engine and voice in the background, so the first announcement isn't slow. */
+  function warmBtVoice() {
+    if (!btVoiceId) return;
+    btVoiceReady(btVoiceId).then(ready => {
+      if (!ready) return;
+      clipFor(btVoiceId, 'Currently playing.', false);
+      contexts.forEach(ctx => prepareFor.add(ctx)); // and every session's likely lines
+      prepareAnnouncements();
+    });
+  }
+
   function stopSpeaking() {
     speechQueue.length = 0;
     speechBusy = false;
     speechRun += 1;
     if (speech) speech.cancel();
+    if (wakeAudio && wakeAudio.src !== silentUrl) backToSilence(false); // cut a clip that's playing
     restSpeaker();
   }
 
   /** Add lines to speak: [{ text, pause }] where pause is milliseconds of silence after the line.
-   *  The voice, speed and pitch are the active session's, fixed now so a later session switch doesn't change them. */
-  function speakLines(lines, interrupt = false, voiceName = sessionVoiceName(), tuning = sessionVoiceTuning()) {
-    if (!speech) return;
+   *  The voice, speed and pitch are the active session's, fixed now so a later session switch doesn't change them.
+   *  `bt` is the Bluetooth voice to use, or '' for the phone's own voice. */
+  function speakLines(lines, interrupt = false, voiceName = sessionVoiceName(), tuning = sessionVoiceTuning(), bt = btVoiceId) {
+    if (!speech && !bt) return;
     if (interrupt) stopSpeaking();
-    speechQueue.push(...lines.filter(l => l && l.text).map(l => ({ voiceName, rate: tuning.rate, pitch: tuning.pitch, ...l })));
+    const added = lines.filter(l => l && l.text).map(l => ({ voiceName, rate: tuning.rate, pitch: tuning.pitch, bt, ...l }));
+    speechQueue.push(...added);
+    if (bt && added.length) clipFor(bt, added[0].text); // start making the first clip while the speaker wakes up
     if (speechBusy) return;
     speechBusy = true;
     // Started right in the tap (phones only allow sound that starts from a tap)
@@ -1207,6 +1532,18 @@ const App = (() => {
       done = true;
       setTimeout(() => { if (run === speechRun) speakNextLine(); }, line.pause || 0);
     };
+    if (line.bt) {
+      const next = speechQueue[0];
+      if (next && next.bt) clipFor(next.bt, next.text); // make the next clip while this one plays
+      playClipLine(line, run, finish);
+      return;
+    }
+    speakWithPhoneVoice(line, finish);
+  }
+
+  /** Say a line with the phone's own voice (speechSynthesis). */
+  function speakWithPhoneVoice(line, finish) {
+    if (!speech) { finish(); return; }
     const utterance = new SpeechSynthesisUtterance(line.text);
     let voice = findVoice(line.voiceName);
     // A browser can refuse a voice; fall back to the device default instead of stalling the queue
@@ -1224,31 +1561,45 @@ const App = (() => {
   /** When a match is completed: the winners, and the score if one was recorded. This is the only automatic
    *  announcement (and only when the voice toggle is on). `score` is [winner's score, other score] or null. */
   function announceResult(winnerIds, score) {
-    if (!voiceOn || !speech) return;
-    const winners = joinNames(winnerIds.map(playerName));
-    speakLines([{ text: `Congratulations to the winners, ${winners}.${score ? ` The score was ${score[0]} to ${score[1]}.` : ''}` }]);
+    if (!voiceOn || (!speech && !btVoiceId)) return;
+    const scoreText = score ? `The score was ${score[0]} to ${score[1]}.` : '';
+    // Bluetooth voice: two lines, so the winners' line (prepared in advance) plays at once while the score is made
+    speakLines(btVoiceId
+      ? [{ text: winnersLine(winnerIds) }, { text: scoreText }]
+      : [{ text: `${winnersLine(winnerIds)}${scoreText ? ` ${scoreText}` : ''}` }]);
   }
 
-  /** Say who is in the next match: the highlighted "Next to play" players who are waiting, plus anyone
-   *  playing right now who will go straight back on. Works even when Voice is off, since it's an explicit tap. */
-  function announceNextUp() {
-    if (!speech) return;
+  /** "Congratulations to the winners, Ana and Ben." */
+  function winnersLine(ids) {
+    return `Congratulations to the winners, ${joinNames(ids.map(playerName))}.`;
+  }
+
+  /** What "Announce next" says: the highlighted "Next to play" players who are waiting, plus anyone
+   *  playing right now who will go straight back on. '' when no one is waiting. */
+  function nextUpText() {
     const busyIds = getBusyPlayerIds();
     const { order, nextCount } = callOrder(busyIds);
     const waiting = order.slice(0, nextCount).map(p => p.name);
     const nextMatch = forecastNextMatch(busyIds);
     const again = state.players.filter(p => nextMatch.has(p.id) && busyIds.has(p.id));
-    if (!waiting.length && !again.length) {
-      showToast('No one is waiting right now.');
-      return;
-    }
-
+    if (!waiting.length && !again.length) return '';
     let text = waiting.length ? `Next up, please get ready: ${joinNames(waiting)}.` : 'Next up:';
     if (again.length) {
       const courts = [...new Set(again.map(p => Session.locate(state, p.id).courtId))];
       const where = courts.length === 1 ? `Court ${courts[0]}` : 'court';
       const who = joinNames(again.map(p => p.name));
       text += `${waiting.length ? ' Also' : ''} ${who}, who ${again.length === 1 ? 'is' : 'are'} playing on ${where} now and will play again.`;
+    }
+    return text;
+  }
+
+  /** Say who is in the next match. Works even when Voice is off, since it's an explicit tap. */
+  function announceNextUp() {
+    if (!speech && !btVoiceId) return;
+    const text = nextUpText();
+    if (!text) {
+      showToast('No one is waiting right now.');
+      return;
     }
     speakLines([{ text }], true);
   }
@@ -1261,7 +1612,7 @@ const App = (() => {
 
   /** Say who is playing on one court (its own Announce Players button). Works even when Voice is off. */
   function announceCourt(court) {
-    if (!speech || !court.activeMatch) return;
+    if ((!speech && !btVoiceId) || !court.activeMatch) return;
     speakLines([{ text: 'Currently playing.', pause: 400 }, courtLine(court)], true);
   }
 
@@ -1305,31 +1656,73 @@ const App = (() => {
          Reopen this page afterwards and the new voice appears under “Most natural voices”. Siri’s own voices can’t be used by websites; Apple keeps them for its own apps.</p>`
       : '';
 
+    // Bluetooth voice (this device, every session): status line kept up to date while the modal is open
+    const btOptions = BT_VOICES.map(v => `<option value="${v.id}"${v.id === (btVoiceId || BT_VOICES[0].id) ? ' selected' : ''}>${escapeHtml(v.label)}</option>`).join('');
+    let btShownFor = null;
+    const btStatus = text => { const s = document.getElementById('m-bt-status'); if (s) s.textContent = text; };
+    const btProgress = mb => btStatus(`Downloading the voice… ${Math.min(BT_DOWNLOAD_MB, Math.round(mb))} of about ${BT_DOWNLOAD_MB} MB. You can close this; it keeps going while the page is open.`);
+    const refreshBt = () => {
+      const on = q('#m-bt').checked;
+      const id = q('#m-bt-voice').value;
+      q('#m-bt-voice-field').hidden = !on;
+      q('#m-phone-voice').hidden = on;
+      if (!on) { btShownFor = null; btStatus(''); return; }
+      if (btShownFor === id) return;
+      btShownFor = id;
+      btStatus('Checking…');
+      btVoiceReady(id).then(ready => {
+        if (btShownFor !== id) return;
+        if (ready) { btStatus('Ready: saved on this device, works offline.'); return; }
+        btProgress(0);
+        downloadBtVoice(id, mb => { if (btShownFor === id) btProgress(mb); }).then(() => {
+          if (btShownFor === id) btStatus('Ready: saved on this device, works offline.');
+          if (btVoiceId === id) { showToast('The Bluetooth voice is ready.'); warmBtVoice(); }
+        }, err => {
+          console.warn('Bluetooth voice download:', err);
+          if (btShownFor === id) { btShownFor = null; btStatus('The download didn’t finish. Check the internet connection and tick the box again.'); }
+        });
+      });
+    };
+
     openModal({
       title: 'Announcer Voice',
       saveLabel: 'Save Voice',
       body: `
         <div class="modal-stack">
-          <label class="field">
-            <span class="field-label">Voice for “${escapeHtml(state.name)}”</span>
-            <select id="m-voice">${buildOptions()}</select>
-          </label>
           <label class="choice">
-            <input type="checkbox" id="m-voice-all" ${showAll ? 'checked' : ''} />
-            <span class="choice-name">Show voices for all languages</span>
+            <input type="checkbox" id="m-bt" ${btVoiceId ? 'checked' : ''} />
+            <span class="choice-name">Play through Bluetooth speakers</span>
           </label>
+          <p class="hint">iPhone only plays its own voices on the phone itself. Tick this to use a voice that plays like music, so it comes out of the speaker your phone is connected to. It downloads once (about ${BT_DOWNLOAD_MB} MB, Wi-Fi is best), then works offline. This applies to every session on this device.</p>
+          <div id="m-bt-voice-field" class="modal-stack" hidden>
+            <label class="field">
+              <span class="field-label">Bluetooth voice</span>
+              <select id="m-bt-voice">${btOptions}</select>
+            </label>
+            <p class="hint" id="m-bt-status" aria-live="polite"></p>
+          </div>
+          <div id="m-phone-voice" class="modal-stack">
+            <label class="field">
+              <span class="field-label">Voice for “${escapeHtml(state.name)}”</span>
+              <select id="m-voice">${buildOptions()}</select>
+            </label>
+            <label class="choice">
+              <input type="checkbox" id="m-voice-all" ${showAll ? 'checked' : ''} />
+              <span class="choice-name">Show voices for all languages</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Pitch <span id="m-voice-pitch-val">${tuning.pitch.toFixed(1)}</span></span>
+              <input type="range" id="m-voice-pitch" min="0.5" max="2" step="0.1" value="${tuning.pitch}" />
+              <span class="hint">Natural voices usually sound best near 1.0.</span>
+            </label>
+            ${appleHelp}
+          </div>
           <label class="field">
             <span class="field-label">Speed <span id="m-voice-rate-val">${tuning.rate.toFixed(2)}×</span></span>
             <input type="range" id="m-voice-rate" min="0.6" max="1.5" step="0.05" value="${tuning.rate}" />
           </label>
-          <label class="field">
-            <span class="field-label">Pitch <span id="m-voice-pitch-val">${tuning.pitch.toFixed(1)}</span></span>
-            <input type="range" id="m-voice-pitch" min="0.5" max="2" step="0.1" value="${tuning.pitch}" />
-            <span class="hint">Natural voices usually sound best near 1.0.</span>
-          </label>
           <button type="button" class="btn btn-secondary" data-modal-action="test-voice">${Icons.svg('volume')}Test voice</button>
           <p class="hint">Every session can have its own voice, speed and pitch. Your choice is saved on this device only, and each device has its own voices.</p>
-          ${appleHelp}
         </div>`,
       onChange: () => {
         const select = q('#m-voice');
@@ -1343,21 +1736,36 @@ const App = (() => {
           select.value = selected; // may not exist in a shorter list; falls back to the first option
           selected = select.value;
         }
+        refreshBt();
       },
       onAction: action => {
         if (action !== 'test-voice') return;
         const [a, b] = state.players.filter(Queue.isActive).map(p => p.name);
         const who = b ? `${a} and ${b}` : (a || 'the team');
         const testTuning = { rate: parseFloat(q('#m-voice-rate').value), pitch: parseFloat(q('#m-voice-pitch').value) };
-        speakLines([{ text: `Congratulations to the winners, ${who}. The score was 11 to 7.` }], true, q('#m-voice').value, testTuning);
+        const bt = q('#m-bt').checked ? q('#m-bt-voice').value : '';
+        const say = () => speakLines([{ text: `Congratulations to the winners, ${who}. The score was 11 to 7.` }], true, q('#m-voice').value, testTuning, bt);
+        if (!bt || !btDownload || btDownload.voiceId !== bt) { say(); return; }
+        btStatus('Wait for the download to finish, then test again.');
       },
       onSave: () => {
         const name = q('#m-voice').value;
         Storage.setPref(`voice_${active.id}`, name);
         Storage.setPref(`voicerate_${active.id}`, q('#m-voice-rate').value);
         Storage.setPref(`voicepitch_${active.id}`, q('#m-voice-pitch').value);
+        const bt = q('#m-bt').checked ? q('#m-bt-voice').value : '';
+        const btChanged = bt !== btVoiceId;
+        btVoiceId = bt;
+        Storage.setPref('btvoice', bt);
         stopSpeaking();
-        showToast(`Voice for “${state.name}”: ${name || 'device default'}.`);
+        if (bt && btDownload && btDownload.voiceId === bt) {
+          showToast('Saved. The Bluetooth voice is still downloading; the phone’s voice is used until it’s ready.');
+        } else if (bt) {
+          showToast(btChanged ? 'Saved. Announcements now play through Bluetooth speakers.' : `Voice for “${state.name}” saved.`);
+          warmBtVoice();
+        } else {
+          showToast(`Voice for “${state.name}”: ${name || 'device default'}.`);
+        }
         return null;
       },
     });
@@ -2055,6 +2463,7 @@ const App = (() => {
     } finally {
       renderCache = null;
     }
+    schedulePrepare(); // Bluetooth voice: get this session's likely announcements ready
     renderSessionsToolbar();
   }
 
@@ -2918,6 +3327,7 @@ const App = (() => {
     const historyDetails = el.historyCard;
     const originalTitle = document.title;
     const wasOpen = [block.open, historyDetails.open];
+    block.querySelectorAll('img[loading="lazy"]').forEach(img => { img.loading = 'eager'; }); // the print watermark loads only when needed
     block.open = true;
     historyDetails.open = true;
     block.classList.add('print-target');
