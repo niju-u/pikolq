@@ -1029,3 +1029,6 @@ html.is-stats-fs, html.is-stats-fs body { overflow: hidden; }
 .stat-card-slot { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; content-visibility: visible; }
 .stat-card-slot .stat-card-rank { display: grid; place-items: center; min-width: 30px; }
 .stat-card-slot .stat-card-player + .stat-card-player { margin-top: 10px; padding-top: 10px; border-top: 2px dashed var(--border); }
+
+/* Speed and battery: decorative animations in the hero and footer pause while off screen (site.js adds .is-offscreen) */
+.is-offscreen, .is-offscreen *, .is-offscreen *::before, .is-offscreen *::after { animation-play-state: paused !important; }

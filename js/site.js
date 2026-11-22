@@ -56,6 +56,13 @@
       .observe(footer);
   }
 
+  // Speed and battery: the hero and footer scenes (pup, players, stars, ticker) pause while they're off screen.
+  // Most of a session is spent scrolled down at the courts, where these ~45 looping animations can't be seen.
+  if ('IntersectionObserver' in window) {
+    const pauser = new IntersectionObserver(entries => entries.forEach(e => e.target.classList.toggle('is-offscreen', !e.isIntersecting)));
+    document.querySelectorAll('.hero-band, .site-footer').forEach(n => pauser.observe(n));
+  }
+
   const scrollToEl = node => {
     const header = document.querySelector('.app-header');
     const top = node.getBoundingClientRect().top + window.scrollY - (header ? header.offsetHeight : 0) - 12;
