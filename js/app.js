@@ -1116,11 +1116,64 @@ const App = (() => {
   let speechBusy = false;
   let speechRun = 0; // changes when speech is stopped, so old lines don't carry on
 
+  // ---------- Bluetooth wake-up ----------
+  // Bluetooth speakers fall asleep when nothing plays and miss the start of a short announcement (or all of it).
+  // So while the voice speaks we loop an inaudible sound (tiny non-zero samples: speakers ignore pure silence),
+  // and the first line waits a moment for the speaker to wake. On iPhone, a playing <audio> element also lets
+  // speech play when the silent switch is on and keeps it on the speaker the phone is using for media.
+  const WAKE_MS = 600; // how long a sleeping speaker gets to wake up (most take 0.3-0.8 s)
+  const AWAKE_FOR_MS = 4000; // phones let the Bluetooth link idle a few seconds after sound stops
+  let wakeAudio = null;
+  let wakeStop = null;
+  let wakeLastAt = 0; // when the wake-up sound last played (the speaker is still awake shortly after)
+
+  function wakeSoundUrl() {
+    const rate = 8000, n = rate; // 1 second, mono, 16-bit
+    const buf = new DataView(new ArrayBuffer(44 + n * 2));
+    const text = (o, s) => [...s].forEach((c, i) => buf.setUint8(o + i, c.charCodeAt(0)));
+    text(0, 'RIFF'); buf.setUint32(4, 36 + n * 2, true); text(8, 'WAVE'); text(12, 'fmt ');
+    buf.setUint32(16, 16, true); buf.setUint16(20, 1, true); buf.setUint16(22, 1, true);
+    buf.setUint32(24, rate, true); buf.setUint32(28, rate * 2, true); buf.setUint16(32, 2, true); buf.setUint16(34, 16, true);
+    text(36, 'data'); buf.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) buf.setInt16(44 + i * 2, i % 2 ? 2 : -2, true); // about -84 dB: far too quiet to hear
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+
+  /** Start (or keep) the wake-up sound. Returns true if the speaker was likely asleep. */
+  function wakeSpeaker() {
+    clearTimeout(wakeStop);
+    // Still playing (a new announcement interrupted the last one) or played moments ago: the speaker is awake
+    const playing = !!wakeAudio && !wakeAudio.paused;
+    const asleep = !playing && Date.now() - wakeLastAt > AWAKE_FOR_MS;
+    try {
+      if (!wakeAudio) {
+        wakeAudio = new Audio(wakeSoundUrl());
+        wakeAudio.loop = true;
+        wakeAudio.setAttribute('playsinline', '');
+      }
+      const p = wakeAudio.play();
+      if (p && p.catch) p.catch(() => {}); // blocked or unsupported: the voice still speaks, just without the wake-up
+    } catch (err) { /* no audio support: speak anyway */ }
+    wakeLastAt = Date.now();
+    return asleep;
+  }
+
+  /** Let the wake-up sound run a little past the last line, then stop it. */
+  function restSpeaker() {
+    clearTimeout(wakeStop);
+    wakeStop = setTimeout(() => {
+      if (!wakeAudio || wakeAudio.paused) return;
+      wakeAudio.pause();
+      wakeLastAt = Date.now();
+    }, 1500);
+  }
+
   function stopSpeaking() {
     speechQueue.length = 0;
     speechBusy = false;
     speechRun += 1;
     if (speech) speech.cancel();
+    restSpeaker();
   }
 
   /** Add lines to speak: [{ text, pause }] where pause is milliseconds of silence after the line.
@@ -1129,13 +1182,21 @@ const App = (() => {
     if (!speech) return;
     if (interrupt) stopSpeaking();
     speechQueue.push(...lines.filter(l => l && l.text).map(l => ({ voiceName, rate: tuning.rate, pitch: tuning.pitch, ...l })));
-    if (!speechBusy) speakNextLine();
+    if (speechBusy) return;
+    speechBusy = true;
+    // Started right in the tap (phones only allow sound that starts from a tap)
+    const asleep = wakeSpeaker();
+    if (!asleep) { speakNextLine(); return; }
+    // The short wait keeps the tap's permission to speak (browsers carry it through a timer under a second)
+    const run = speechRun;
+    setTimeout(() => { if (run === speechRun) speakNextLine(); }, WAKE_MS);
   }
 
   function speakNextLine() {
     const line = speechQueue.shift();
     if (!line) {
       speechBusy = false;
+      restSpeaker();
       return;
     }
     speechBusy = true;
