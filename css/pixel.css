@@ -1032,3 +1032,78 @@ html.is-stats-fs, html.is-stats-fs body { overflow: hidden; }
 
 /* Speed and battery: decorative animations in the hero and footer pause while off screen (site.js adds .is-offscreen) */
 .is-offscreen, .is-offscreen *, .is-offscreen *::before, .is-offscreen *::after { animation-play-state: paused !important; }
+
+/* =====================================================================
+   Shared sessions: share button, share bar (code, role, 24-hour warning), share pop-ups
+   ===================================================================== */
+.session-head-share { flex: none; }
+.session-head-share.is-on { background: var(--accent); color: #33283B; }
+.share-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px;
+  padding: 10px 18px; background: var(--lav-25); border-bottom: 3px solid var(--px-line);
+}
+.session-block:not([open]) > .share-bar { border-bottom: 0; }
+.share-bar-main { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-width: 0; flex: 1 1 320px; }
+.share-badge {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+  font-family: var(--px-label); font-size: 0.66rem; letter-spacing: 0.04em; text-transform: uppercase;
+  background: var(--accent); color: #33283B; border: 2px solid var(--px-ink);
+}
+.share-badge .icon { width: 14px; height: 14px; }
+.share-badge.is-viewer { background: #C9B5DC; }
+.share-badge.is-ended { background: var(--neutral-bg); color: var(--text); border-color: var(--px-line); }
+.share-bar-code { font-size: 0.85rem; color: var(--text-2); }
+.share-bar-code strong { font-family: var(--px-label); font-size: 1rem; letter-spacing: 0.12em; color: var(--heading); }
+.share-bar-sync { font-size: 0.78rem; color: var(--error-fg); font-weight: 700; }
+.share-bar-warning, .share-bar-note { flex: 1 1 100%; margin: 0; display: flex; align-items: flex-start; gap: 6px; font-size: 0.8rem; color: var(--warning-fg); }
+.share-bar-note { color: var(--text-2); }
+.share-bar-warning .icon { flex: none; width: 15px; height: 15px; margin-top: 1px; }
+.share-bar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+html.px-ui:not([data-theme="dark"]) .share-bar-warning { color: #7A5A00; }
+
+/* Pop-ups */
+.share-warning {
+  display: flex; align-items: flex-start; gap: 10px; margin: 0 0 14px; padding: 10px 12px;
+  background: var(--warning-bg); color: var(--warning-fg); border: 2px solid var(--warning-line); font-size: 0.85rem; line-height: 1.45;
+}
+.share-warning .icon { flex: none; width: 18px; height: 18px; margin-top: 1px; }
+.share-hint { margin: 0 0 14px; }
+.share-codes { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.share-code-box {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px;
+  padding: 10px 12px; border: 2px solid var(--px-line); background: var(--lav-25);
+}
+.share-code-label { grid-column: 1 / -1; font-family: var(--px-label); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-2); }
+.share-code { font-family: var(--px-label); font-size: 1.3rem; letter-spacing: 0.12em; color: var(--heading); white-space: nowrap; }
+.share-link-row { display: flex; gap: 8px; }
+.share-link-row input { flex: 1; min-width: 0; }
+.share-code-input { font-family: var(--px-label); font-size: 1.2rem; letter-spacing: 0.18em; text-transform: uppercase; }
+.field-optional { font-weight: 400; color: var(--text-2); }
+.setup-join { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; }
+.setup-join .icon { width: 15px; height: 15px; }
+
+/* View-only shared sessions: hide the editing controls */
+.session-block.is-viewonly :is(
+  [data-action="change-winner"], [data-action="complete-match"],
+  [data-action="open-swap"], [data-action="open-pairing"], [data-action="manage-player"], [data-action="restore-player"],
+  [data-move], [data-el="btn-reset-order"], [data-el="btn-add-players"], [data-el="btn-clear-history"], [data-el="btn-rename"],
+  [data-action="announce-court"], [data-el="btn-announce"], [data-el="btn-voice-settings"], [data-el="btn-rank-stats"]
+) { display: none !important; } /* the voice announcer is for organizers only */
+.session-block.is-viewonly :is(.court-tools, .court-decision.is-hint) { display: none !important; }
+.session-block.is-viewonly .team-pick { cursor: default; pointer-events: none; } /* teams stay visible; tapping a team (pick the winner) is off */
+.session-block.is-viewonly .score-field input { pointer-events: none; background: transparent; }
+
+@media (max-width: 760px) {
+  .session-head-share { order: 2; } /* right after the pencil */
+  .session-block.can-share .session-head-main { flex: 1 1 0; } /* takes whatever is left beside the arrow, pencil and share icon */
+}
+@media (max-width: 767px) {
+  .share-bar { padding: 10px 12px; }
+  .share-bar-actions { width: 100%; }
+  .share-bar-actions .btn { flex: 1 1 auto; justify-content: center; }
+}
+@media print { .share-bar, .session-head-share { display: none !important; } }
+
+/* Player Management: a long status (e.g. "Left · 10:40 AM" with a long note) wraps instead of spilling out of the card */
+.pm-meta { min-width: 0; flex-wrap: wrap; }
+.pm-meta .badge { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }

@@ -19,6 +19,7 @@ const App = (() => {
       nextMatchId: 1,
       waitOverride: null, // manual waiting order (player ids), or null
       strictRest: false, // true: nobody goes straight back on court (the same group may repeat)
+      statsRanked: false, // "Rank players" in Player Statistics (part of the session, so watchers see the host's choice)
     };
   }
 
@@ -82,6 +83,13 @@ const App = (() => {
 
     // If another tab changes saved data, use its version instead of overwriting it.
     Storage.onChangedElsewhere(onChangedElsewhere);
+
+    // Shared sessions: keep them in sync, and open the join box for #join=CODE links
+    if (Share.enabled) {
+      startShareSync();
+      openJoinFromLink();
+      window.addEventListener('hashchange', openJoinFromLink);
+    }
   }
 
   /** Load a saved session and add it to the page. Returns its context, or null if it's broken. */
@@ -93,6 +101,12 @@ const App = (() => {
       return null;
     }
     const ctx = addSessionToPage(id, migrateSession(saved));
+    // "Rank players" used to be saved per device: move it into the session (saved below)
+    const oldRank = Storage.getPref(`rank_${id}`, null);
+    if (oldRank !== null) {
+      if (oldRank === '1') state.statsRanked = true;
+      Storage.removePref(`rank_${id}`);
+    }
     // Saved before start times were kept: use the time the session was created
     if (!state.startedMs) {
       const entry = Storage.listSessions().find(s => s.id === id);
@@ -129,6 +143,8 @@ const App = (() => {
       ctx.state = migrateSession(change.session);
       ctx.state.phase = 'session';
       if (active === ctx) state = ctx.state;
+      ctx.share = loadShare(ctx.id);
+      ctx.syncedJson = ctx.share && !ctx.share.dirty ? JSON.stringify(ctx.state) : null;
       activate(ctx);
       renderSession();
     } else {
@@ -153,6 +169,8 @@ const App = (() => {
       headPlaying: get('head-playing'),
       sessionMeta: get('session-meta'),
       btnRename: get('btn-rename'),
+      btnShare: get('btn-share'),
+      shareBar: get('share-bar'),
       printCourts: get('print-courts'),
       printPlayerCount: get('print-player-count'),
       printPlayerNames: get('print-player-names'),
@@ -186,7 +204,11 @@ const App = (() => {
     // These sections only update the page when their HTML actually changes (faster).
     [ctx.el.sessionMeta, ctx.el.printPlayerNames, ctx.el.courtsGrid, ctx.el.queueMode, ctx.el.waitingList,
       ctx.el.pmList, ctx.el.statsBody, ctx.el.statsHead, ctx.el.statsCards, ctx.el.historyList,
-      ctx.el.headPlaying].forEach(cacheHtml);
+      ctx.el.headPlaying, ctx.el.shareBar].forEach(cacheHtml);
+
+    // Shared session info for this device (code, role, passcode, synced version)
+    ctx.share = loadShare(id);
+    ctx.syncedJson = ctx.share && !ctx.share.dirty ? JSON.stringify(sessionState) : null;
 
     // Open/close: the session block is a <section>, not <details>, so the rename button isn't nested inside
     // the open/close control. `root.open` behaves like <details>.open (and fires 'toggle') so the rest of the code is unchanged.
@@ -213,7 +235,7 @@ const App = (() => {
     syncToggle();
     // Clicking anywhere on the bar opens/closes it, except the rename button
     get('session-head').addEventListener('click', ev => {
-      if (ev.target.closest('[data-el="btn-rename"]')) return;
+      if (ev.target.closest('[data-el="btn-rename"], [data-el="btn-share"]')) return;
       root.open = !root.open;
     });
 
@@ -259,12 +281,30 @@ const App = (() => {
 
   function bindSessionEvents(ctx) {
     const e = ctx.el;
-    on(ctx, e.btnRename, 'click', openRenameSessionModal); // the header's click handler skips this button
-    on(ctx, e.courtsGrid, 'click', onCourtsGridClick);
-    on(ctx, e.courtsGrid, 'input', onCourtsGridInput);
-    on(ctx, e.courtsGrid, 'keydown', onTeamPickKey);
-    on(ctx, e.waitingList, 'click', onWaitingListClick);
+    // View-only shared sessions: editing controls do nothing (and say how to unlock them)
+    const editOnly = handler => ev => { if (!blockIfViewOnly(ctx, ev)) handler(ev); };
+    on(ctx, e.btnRename, 'click', editOnly(openRenameSessionModal)); // the header's click handler skips this button
+    on(ctx, e.btnShare, 'click', onShareButton);
+    on(ctx, e.shareBar, 'click', onShareBarClick);
+    on(ctx, e.courtsGrid, 'click', ev => {
+      const act = ev.target.closest('[data-action]');
+      if (act && blockIfViewOnly(ctx, ev)) return; // watchers can't edit or use the announcer
+      onCourtsGridClick(ev);
+    });
+    on(ctx, e.courtsGrid, 'input', ev => {
+      if (isViewOnly(ctx)) { renderSession(); return; }
+      onCourtsGridInput(ev);
+    });
+    on(ctx, e.courtsGrid, 'keydown', ev => {
+      if (isViewOnly(ctx) && ev.target.closest('.team-pick')) return;
+      onTeamPickKey(ev);
+    });
+    on(ctx, e.waitingList, 'click', ev => {
+      if (ev.target.closest('[data-move]') && blockIfViewOnly(ctx, ev)) return;
+      onWaitingListClick(ev);
+    });
     on(ctx, e.strictRest, 'change', () => {
+      if (blockIfViewOnly(ctx)) { e.strictRest.checked = !!state.strictRest; return; }
       state.strictRest = e.strictRest.checked;
       persist();
       renderSession();
@@ -272,22 +312,23 @@ const App = (() => {
         ? 'Strict rest is on. Nobody plays twice in a row unless there aren’t enough players to rest.'
         : 'Strict rest is off. Groups are mixed up more, so someone may play two in a row now and then.');
     });
-    on(ctx, e.btnResetOrder, 'click', () => {
+    on(ctx, e.btnResetOrder, 'click', ev => {
+      if (blockIfViewOnly(ctx, ev)) return;
       Session.resetWaitingOrder(state);
       commitChange();
     });
     e.btnAnnounce.hidden = !speech;
-    on(ctx, e.btnAnnounce, 'click', announceNextUp);
+    on(ctx, e.btnAnnounce, 'click', editOnly(announceNextUp)); // the announcer is for the organizers
     e.btnVoiceSettings.hidden = !speech;
-    on(ctx, e.btnVoiceSettings, 'click', openVoiceModal);
+    on(ctx, e.btnVoiceSettings, 'click', editOnly(openVoiceModal));
     on(ctx, e.pmList, 'click', ev => {
       const btn = ev.target.closest('[data-action]');
-      if (!btn) return;
+      if (!btn || blockIfViewOnly(ctx, ev)) return;
       const id = parseInt(btn.dataset.playerId, 10);
       if (btn.dataset.action === 'manage-player') openManagePlayerModal(id);
       else if (btn.dataset.action === 'restore-player') onRestorePlayer(id);
     });
-    on(ctx, e.btnAddPlayers, 'click', openAddPlayersModal);
+    on(ctx, e.btnAddPlayers, 'click', editOnly(openAddPlayersModal));
     on(ctx, e.historyList, 'click', ev => {
       if (!ev.target.closest('[data-action="more-history"]')) return;
       active.historyLimit = (active.historyLimit || HISTORY_PAGE) + 100;
@@ -299,7 +340,7 @@ const App = (() => {
     e.statsBody.addEventListener('mouseover', highlightRankSlot);
     e.statsBody.addEventListener('mouseleave', highlightRankSlot);
     on(ctx, e.btnStatsFs, 'click', openStatsFs);
-    on(ctx, e.btnClearHistory, 'click', onClearHistory);
+    on(ctx, e.btnClearHistory, 'click', editOnly(onClearHistory));
     on(ctx, e.btnReset, 'click', onResetSession);
   }
 
@@ -451,6 +492,7 @@ const App = (() => {
     });
     if (!Array.isArray(s.waitOverride) || !s.waitOverride.every(Number.isInteger)) s.waitOverride = null;
     s.strictRest = s.strictRest === true;
+    s.statsRanked = s.statsRanked === true;
     s.startedAt = typeof s.startedAt === 'string' ? s.startedAt : '';
     s.startedMs = Number.isFinite(s.startedMs) && s.startedMs > 0 ? s.startedMs : 0;
     s.name = typeof s.name === 'string' && s.name.trim() ? s.name.trim().slice(0, MAX_SESSION_NAME) : 'Session';
@@ -473,6 +515,8 @@ const App = (() => {
     el.sessionsCount = document.getElementById('sessions-count');
     el.btnToggleAll = document.getElementById('btn-toggle-all');
     el.btnNewSession = document.getElementById('btn-new-session');
+    el.btnJoinSession = document.getElementById('btn-join-session');
+    el.btnJoinSetup = document.getElementById('btn-join-setup');
     el.btnVoice = document.getElementById('btn-voice');
     el.btnCancelSetup = document.getElementById('btn-cancel-setup');
     el.sessionsFooter = document.getElementById('sessions-footer');
@@ -519,12 +563,20 @@ const App = (() => {
       if (e.key === 'Escape') { e.preventDefault(); closeStatsFs(); return; }
       if (e.key !== 'Tab') return;
       // Keep keyboard focus inside the full-screen view
-      const items = [el.statsFsRank, el.statsFsClose];
+      const items = [el.statsFsRank, el.statsFsClose].filter(b => !b.hidden);
       const i = items.indexOf(document.activeElement);
       e.preventDefault();
       items[(i + (e.shiftKey ? items.length - 1 : 1)) % items.length].focus();
     });
     el.btnNewSession.addEventListener('click', startNewSession);
+    el.btnJoinSession.addEventListener('click', () => openJoinModal());
+    el.btnJoinSetup.addEventListener('click', () => openJoinModal());
+    el.btnJoinSetup.hidden = !Share.enabled;
+    // Copy buttons inside pop-ups (share code, passcode, link)
+    el.modalBody.addEventListener('click', ev => {
+      const btn = ev.target.closest('[data-copy]');
+      if (btn) copyText(btn.dataset.copy, btn.dataset.copyLabel || 'Copied');
+    });
     el.btnVoice.addEventListener('click', toggleVoice);
     el.btnCancelSetup.addEventListener('click', () => pixelWipe(() => showView('sessions')));
     el.btnClearAll.addEventListener('click', onClearAllSessions);
@@ -1398,7 +1450,7 @@ const App = (() => {
 
   /** Called after a session is drawn: prepare its lines a moment later (after quick runs of changes settle). */
   function schedulePrepare() {
-    if (!btVoiceId || !active) return;
+    if (!btVoiceId || !active || isViewOnly(active)) return; // watchers don't use the announcer
     prepareFor.add(active);
     clearTimeout(prepareTimer);
     prepareTimer = setTimeout(prepareAnnouncements, 700);
@@ -1774,7 +1826,7 @@ const App = (() => {
   function renderVoiceButton() {
     el.btnVoice.setAttribute('aria-pressed', String(voiceOn));
     el.btnVoice.innerHTML = `${Icons.svg(voiceOn ? 'volume' : 'volumeOff')}Winner voice ${voiceOn ? 'on' : 'off'}`;
-    el.btnVoice.hidden = !speech;
+    el.btnVoice.hidden = voiceToggleHidden();
   }
 
   function toggleVoice() {
@@ -1838,8 +1890,28 @@ const App = (() => {
 
   function onModalSave() {
     if (!modal || !modal.onSave) return closeModal();
+    if (el.modalSave.disabled) return; // still waiting for the last try
     activate(modal.ctx);
     const error = modal.onSave();
+    if (error && typeof error.then === 'function') {
+      // Waits for the server: keep the pop-up open until it answers
+      const current = modal;
+      const label = el.modalSave.textContent;
+      el.modalSave.disabled = true;
+      el.modalSave.textContent = 'Please wait…';
+      hideModalError();
+      error.then(err => {
+        if (modal !== current) return;
+        if (err) showModalError(err);
+        else closeModal();
+      }, () => {
+        if (modal === current) showModalError('Something went wrong. Try again.');
+      }).finally(() => {
+        el.modalSave.disabled = false;
+        el.modalSave.textContent = label;
+      });
+      return;
+    }
     if (error) showModalError(error);
     else closeModal();
   }
@@ -2207,8 +2279,15 @@ const App = (() => {
   }
 
   function onResetSession() {
-    if (!confirm(`Delete "${state.name}"? This removes its players, courts, stats and match history. Other sessions aren't affected.`)) return;
     const ctx = active;
+    const sh = ctx.share && !ctx.share.ended ? ctx.share : null;
+    const msg = !sh
+      ? `Delete "${state.name}"? This removes its players, courts, stats and match history. Other sessions aren't affected.`
+      : sh.role === 'owner'
+        ? `Delete "${state.name}"? This also stops sharing it: the shared copy is deleted and others can no longer watch or edit it.`
+        : `Remove "${state.name}" from this device? The shared session itself isn't affected.`;
+    if (!confirm(msg)) return;
+    if (sh && sh.role === 'owner') Share.stop(sh.code, sh.pass).catch(() => {}); // the shared copy also expires on its own
     Storage.deleteSession(ctx.id);
     removeSessionFromPage(ctx);
     showToast(`Deleted "${ctx.state.name}".`);
@@ -2226,6 +2305,7 @@ const App = (() => {
   let saveWarned = false;
   function persist() {
     if (!active) return;
+    noteShareChange(active);
     if (Storage.saveSession(active.id, state)) {
       saveWarned = false;
     } else if (!saveWarned) {
@@ -2245,13 +2325,20 @@ const App = (() => {
     return `Session ${n}`;
   }
 
+  /** The "Winner voice" switch is for organizers: hidden while setting up, and when every session here is watch-only. */
+  function voiceToggleHidden() {
+    const list = [...contexts.values()];
+    return !speech || !el.setupView.hidden || (list.length > 0 && list.every(isViewOnly));
+  }
+
   function renderSessionsToolbar() {
     const count = contexts.size;
     const settingUp = !el.setupView.hidden;
     el.sessionsToolbar.hidden = count === 0;
     el.sessionsCount.textContent = count;
     el.btnNewSession.hidden = settingUp;
-    el.btnVoice.hidden = !speech || settingUp;
+    el.btnJoinSession.hidden = settingUp || !Share.enabled;
+    el.btnVoice.hidden = voiceToggleHidden();
     el.btnToggleAll.hidden = settingUp || count < 2;
     el.btnToggleAll.textContent = [...contexts.values()].some(ctx => ctx.root.open) ? 'Collapse all' : 'Expand all';
     el.btnCancelSetup.hidden = count === 0;
@@ -2264,10 +2351,13 @@ const App = (() => {
     const count = contexts.size;
     if (!count) return;
     const what = count === 1 ? 'the session' : `all ${count} sessions`;
-    if (!confirm(`Delete ${what}? This removes every player, court, stat and match history. This cannot be undone.`)) return;
+    const sharing = [...contexts.values()].some(ctx => ctx.share && !ctx.share.ended && ctx.share.role === 'owner');
+    if (!confirm(`Delete ${what}? This removes every player, court, stat and match history. This cannot be undone.${sharing ? ' Sessions you shared stop being shared.' : ''}`)) return;
     pixelWipe(() => {
       closeModal();
       [...contexts.values()].forEach(ctx => {
+        const sh = ctx.share;
+        if (sh && !sh.ended && sh.role === 'owner') Share.stop(sh.code, sh.pass).catch(() => {}); // it also expires on its own
         Storage.deleteSession(ctx.id);
         removeSessionFromPage(ctx);
       });
@@ -2464,6 +2554,7 @@ const App = (() => {
       renderCache = null;
     }
     schedulePrepare(); // Bluetooth voice: get this session's likely announcements ready
+    if (active) renderShareBar(active);
     renderSessionsToolbar();
   }
 
@@ -2806,7 +2897,7 @@ const App = (() => {
               ${action}
             </div>
             <div class="pm-meta">
-              <span class="badge ${statusBadge[status.key]}">${status.label}</span>
+              <span class="badge ${statusBadge[status.key]}">${escapeHtml(status.label)}</span>
               <span class="pm-games">${p.gamesPlayed} ${plural(p.gamesPlayed, 'game')}</span>
             </div>
             ${timelineText(p) ? `<div class="pm-times">${Icons.svg('clock')}${escapeHtml(timelineText(p))}</div>` : ''}
@@ -2863,7 +2954,7 @@ const App = (() => {
 
   /** "Rank players" is remembered per session on this device. */
   function isStatsRanked() {
-    return !!active && Storage.getPref(`rank_${active.id}`, '0') === '1';
+    return !!active && state.statsRanked === true;
   }
 
   /** Ranked table: hovering any player in a shared place highlights the whole place
@@ -2879,9 +2970,11 @@ const App = (() => {
     if (body.parentElement.classList.contains('is-ranked')) slot.forEach(r => r.classList.add('is-slot-hover'));
   }
 
+  /** Only the host and people with the passcode can switch ranking; watchers see their choice. */
   function toggleStatsRank() {
-    if (!active) return;
-    Storage.setPref(`rank_${active.id}`, isStatsRanked() ? '0' : '1');
+    if (!active || blockIfViewOnly(active)) return;
+    state.statsRanked = !state.statsRanked;
+    persist(); // saved with the session (and shared)
     renderStats();
   }
 
@@ -3077,6 +3170,7 @@ const App = (() => {
     el.statsFsSession.textContent = state.name || 'Open play';
     el.statsFsMeta.textContent = `${matches} match${matches === 1 ? '' : 'es'} played · ${players.length} player${players.length === 1 ? '' : 's'}`
       + (played < players.length ? ` (${played} played)` : '');
+    el.statsFsRank.hidden = isViewOnly(active); // watchers see the host's choice
     el.statsFsRank.setAttribute('aria-pressed', ranked ? 'true' : 'false');
     el.statsFsRank.title = ranked ? RANK_TIP_ON : RANK_TIP_OFF;
     el.statsFsRank.innerHTML = `${Icons.svg('trophy')}${ranked ? 'Ranked' : 'Rank players'}`;
@@ -3101,6 +3195,527 @@ const App = (() => {
         </tr>`;
       }).join('')
       : '<tr><td class="name edge-l edge-r" colspan="9">No players yet.</td></tr>';
+  }
+
+  // ---------- shared sessions ----------
+  // A session can be shared through the online database (share.js). Anyone with the code can watch;
+  // the code plus the passcode lets someone edit. The shared copy is deleted 24 hours after the last change.
+  // On each device ctx.share = { code, role: 'owner' | 'editor' | 'viewer', pass?, version, expiresAt, dirty, ended? }.
+
+  const SHARE_POLL_MS = 4000;
+  const NET_ERROR = 'Couldn’t reach the share server. Check your internet connection and try again.';
+  let applyingRemote = false; // true while a change from the server is being saved here (don't send it back)
+
+  function loadShare(id) {
+    try {
+      const v = JSON.parse(Storage.getPref(`share_${id}`, 'null'));
+      return v && typeof v.code === 'string' && ['owner', 'editor', 'viewer'].includes(v.role) ? v : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function saveShare(ctx) {
+    if (ctx.share) Storage.setPref(`share_${ctx.id}`, JSON.stringify(ctx.share));
+    else Storage.removePref(`share_${ctx.id}`);
+  }
+
+  /** Watching without the passcode. A watcher's copy stays view-only even after sharing ends. */
+  function isViewOnly(ctx) {
+    return !!(ctx && ctx.share && ctx.share.role === 'viewer');
+  }
+
+  /** In a view-only session, stop an editing action and say how to unlock editing. */
+  function blockIfViewOnly(ctx, ev) {
+    if (!isViewOnly(ctx)) return false;
+    if (ev && ev.preventDefault) ev.preventDefault();
+    showToast(ctx.share.ended
+      ? 'View only. This is a copy of a shared session that has ended.'
+      : 'View only. Tap “Enter passcode” to make changes on this device.');
+    return true;
+  }
+
+  /** "23 h 41 m" until the shared copy is deleted (if nothing changes). */
+  function shareTimeLeft(sh) {
+    const ms = (sh.expiresAt || 0) - Date.now();
+    if (ms <= 60000) return 'less than a minute';
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    return h ? `${h} h ${m} m` : `${m} m`;
+  }
+
+  function copyText(text, done = 'Copied') {
+    const ok = () => showToast(`${done}.`);
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(ok, () => fallbackCopy(text, ok));
+    } else {
+      fallbackCopy(text, ok);
+    }
+  }
+
+  function fallbackCopy(text, ok) {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+    (el.modal.open ? el.modal : document.body).appendChild(area);
+    area.select();
+    let copied = false;
+    try { copied = document.execCommand('copy'); } catch (err) { copied = false; }
+    area.remove();
+    if (copied) ok();
+    else showToast(`Couldn’t copy. ${text}`);
+  }
+
+  // ---- the share bar under the session header ----
+
+  function renderShareBar(ctx) {
+    const sh = ctx.share;
+    const viewOnly = isViewOnly(ctx);
+    ctx.el.btnShare.hidden = !Share.enabled || (viewOnly && sh.ended); // a watcher's ended copy can't be re-shared
+    ctx.el.btnShare.classList.toggle('is-on', !!(sh && !sh.ended));
+    ctx.el.btnShare.title = sh && !sh.ended ? 'Shared: show code and passcode' : 'Share session';
+    ctx.root.classList.toggle('is-viewonly', viewOnly);
+    ctx.root.classList.toggle('is-shared', !!(sh && !sh.ended));
+    ctx.root.classList.toggle('can-share', Share.enabled); // phones: room for the share icon beside the pencil
+    ctx.el.strictRest.disabled = viewOnly;
+    const bar = ctx.el.shareBar;
+    if (!sh) {
+      bar.hidden = true;
+      bar.html = '';
+      return;
+    }
+    bar.hidden = false;
+    if (sh.ended) {
+      // A watcher keeps a view-only copy (it can only be removed); the host and helpers keep a normal copy
+      bar.html = viewOnly ? `
+        <div class="share-bar-main">
+          <span class="share-badge is-ended">${Icons.svg('clock')}Sharing ended · view only</span>
+          <p class="share-bar-note">The shared copy was deleted (24 hours without changes, or sharing was stopped). This view-only copy stays on this device until you remove it.</p>
+        </div>
+        <div class="share-bar-actions">
+          <button type="button" class="btn btn-secondary btn-sm" data-share="leave">Remove from this device</button>
+        </div>` : `
+        <div class="share-bar-main">
+          <span class="share-badge is-ended">${Icons.svg('clock')}Sharing ended</span>
+          <p class="share-bar-note">The shared copy was deleted (24 hours without changes, or sharing was stopped). This copy stays on this device.</p>
+        </div>
+        <div class="share-bar-actions">
+          <button type="button" class="btn btn-secondary btn-sm" data-share="dismiss">OK</button>
+        </div>`;
+      return;
+    }
+    const badge = {
+      owner: `${Icons.svg('share')}Shared`,
+      editor: `${Icons.svg('share')}Shared · you can edit`,
+      viewer: `${Icons.svg('eye')}View only`,
+    }[sh.role];
+    bar.html = `
+      <div class="share-bar-main">
+        <span class="share-badge is-${sh.role}">${badge}</span>
+        <span class="share-bar-code">Code <strong>${escapeHtml(sh.code)}</strong></span>
+        ${ctx.shareOffline ? '<span class="share-bar-sync">Can’t reach the share server · retrying</span>' : ''}
+        <p class="share-bar-warning">${Icons.svg('alert')}<span>The shared copy is deleted after <strong>24 hours without changes</strong> (in ${shareTimeLeft(sh)}).${sh.role === 'owner' ? ' Your copy here is kept.' : ''}</span></p>
+      </div>
+      <div class="share-bar-actions">
+        ${sh.role === 'viewer' ? '<button type="button" class="btn btn-primary btn-sm" data-share="unlock">Enter passcode</button>' : ''}
+        <button type="button" class="btn btn-secondary btn-sm" data-share="details">Share details</button>
+        ${sh.role === 'owner'
+          ? '<button type="button" class="btn btn-danger-ghost btn-sm" data-share="stop">Stop sharing</button>'
+          : '<button type="button" class="btn btn-secondary btn-sm" data-share="leave">Leave</button>'}
+      </div>`;
+  }
+
+  function onShareBarClick(ev) {
+    const btn = ev.target.closest('[data-share]');
+    if (!btn) return;
+    const ctx = active;
+    const what = btn.dataset.share;
+    if (what === 'details') openShareDetailsModal(false);
+    else if (what === 'unlock') openPasscodeModal();
+    else if (what === 'stop') stopSharing(ctx);
+    else if (what === 'leave') leaveShared(ctx);
+    else if (what === 'dismiss') {
+      ctx.share = null;
+      ctx.syncedJson = null;
+      saveShare(ctx);
+      renderShareBar(ctx);
+    }
+  }
+
+  function onShareButton() {
+    if (!Share.enabled || (isViewOnly(active) && active.share.ended)) return;
+    if (active.share && !active.share.ended) openShareDetailsModal(false);
+    else openShareModal();
+  }
+
+  // ---- share, details, unlock, join ----
+
+  const SHARE_WARNING = `<p class="share-warning" role="note">${'__ALERT__'}<span><strong>Shared sessions are deleted after 24 hours without changes.</strong> Every change keeps it for another 24 hours. Your own copy on this device is always kept.</span></p>`;
+  const shareWarning = () => SHARE_WARNING.replace('__ALERT__', Icons.svg('alert'));
+
+  function openShareModal() {
+    const ctx = active;
+    openModal({
+      title: 'Share Session',
+      saveLabel: 'Share',
+      body: `
+        ${shareWarning()}
+        <p class="hint share-hint">Anyone with the <strong>code</strong> can watch this session live. Anyone with the code <strong>and passcode</strong> can also make changes.</p>
+        <div class="field">
+          <label class="field-label" for="m-share-pass">Passcode for editing</label>
+          <input type="text" id="m-share-pass" maxlength="12" autocomplete="off" spellcheck="false" value="${Share.randomPasscode()}" />
+          <p class="hint">4 to 12 characters. Give it only to people who help run the session.</p>
+        </div>`,
+      onSave: async () => {
+        const pass = q('#m-share-pass').value.trim();
+        if (pass.length < 4 || pass.length > 12) return 'The passcode needs 4 to 12 characters.';
+        const snapshot = JSON.parse(JSON.stringify(ctx.state));
+        let res;
+        try {
+          res = await Share.share(snapshot, pass);
+        } catch (err) {
+          return NET_ERROR;
+        }
+        if (!res || res.error || !res.code) return 'Couldn’t share this session. Try again.';
+        ctx.share = { code: res.code, role: 'owner', pass, version: res.version, expiresAt: Date.parse(res.expires_at), dirty: false };
+        ctx.syncedJson = JSON.stringify(snapshot);
+        saveShare(ctx);
+        // Changes made while sharing go up straight after
+        if (JSON.stringify(ctx.state) !== ctx.syncedJson) { ctx.share.dirty = true; schedulePush(ctx); }
+        renderShareBar(ctx);
+        setTimeout(() => { activate(ctx); openShareDetailsModal(true); }, 0);
+        return null;
+      },
+    });
+  }
+
+  function openShareDetailsModal(justShared) {
+    const ctx = active;
+    const sh = ctx.share;
+    if (!sh) return;
+    const link = Share.joinLink(sh.code);
+    const canEdit = sh.role !== 'viewer' && sh.pass;
+    openModal({
+      title: justShared ? 'Session Shared' : 'Shared Session',
+      canSave: false,
+      body: `
+        <p class="hint share-hint">${justShared ? 'Send the code or link to people who want to watch. ' : ''}${canEdit ? 'Give the passcode only to helpers who should be able to make changes.' : 'Ask the organizer for the passcode if you need to make changes.'}</p>
+        <div class="share-codes">
+          <div class="share-code-box">
+            <span class="share-code-label">Code</span>
+            <strong class="share-code">${escapeHtml(sh.code)}</strong>
+            <button type="button" class="btn btn-secondary btn-sm" data-copy="${escapeHtml(sh.code)}" data-copy-label="Code copied">Copy</button>
+          </div>
+          ${canEdit ? `
+          <div class="share-code-box">
+            <span class="share-code-label">Passcode</span>
+            <strong class="share-code">${escapeHtml(sh.pass)}</strong>
+            <button type="button" class="btn btn-secondary btn-sm" data-copy="${escapeHtml(sh.pass)}" data-copy-label="Passcode copied">Copy</button>
+          </div>` : ''}
+        </div>
+        <div class="field">
+          <label class="field-label" for="m-share-link">Link to watch</label>
+          <div class="share-link-row">
+            <input type="text" id="m-share-link" readonly value="${escapeHtml(link)}" />
+            <button type="button" class="btn btn-secondary btn-sm" data-copy="${escapeHtml(link)}" data-copy-label="Link copied">Copy</button>
+          </div>
+        </div>
+        <p class="share-warning" role="note">${Icons.svg('alert')}<span><strong>The shared copy is deleted after 24 hours without changes</strong> (in ${shareTimeLeft(sh)}). Every change keeps it for another 24 hours.${sh.role === 'owner' ? ' Your own copy on this device is always kept.' : ''}</span></p>`,
+    });
+  }
+
+  function lockedMessage() {
+    return 'Too many wrong passcodes. Editing is locked for 15 minutes. You can still watch without a passcode.';
+  }
+
+  function openPasscodeModal() {
+    const ctx = active;
+    const sh = ctx.share;
+    openModal({
+      title: 'Edit This Session',
+      saveLabel: 'Unlock editing',
+      body: `
+        <p class="hint share-hint">Enter the passcode from the organizer to make changes on this device.</p>
+        <div class="field">
+          <label class="field-label" for="m-unlock-pass">Passcode</label>
+          <input type="text" id="m-unlock-pass" maxlength="32" autocomplete="off" spellcheck="false" />
+        </div>`,
+      onSave: async () => {
+        const pass = q('#m-unlock-pass').value.trim();
+        if (!pass) return 'Enter the passcode.';
+        let res;
+        try {
+          res = await Share.checkPasscode(sh.code, pass);
+        } catch (err) {
+          return NET_ERROR;
+        }
+        if (ctx.share !== sh) return null;
+        if (res.missing) { endShare(ctx); return 'This shared session no longer exists.'; }
+        if (res.locked) return lockedMessage();
+        if (res.denied) return 'Wrong passcode.';
+        sh.role = 'editor';
+        sh.pass = pass;
+        sh.version = res.version;
+        sh.expiresAt = Date.parse(res.expires_at);
+        sh.dirty = false;
+        saveShare(ctx);
+        applyRemote(ctx, res.state, true);
+        showToast('Editing unlocked on this device.');
+        return null;
+      },
+    });
+  }
+
+  function openJoinModal(prefill = '') {
+    openModal({
+      title: 'Join a Shared Session',
+      saveLabel: 'Join',
+      body: `
+        <div class="field">
+          <label class="field-label" for="m-join-code">Session code</label>
+          <input type="text" id="m-join-code" class="share-code-input" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABC123" value="${escapeHtml(prefill)}" />
+        </div>
+        <div class="field">
+          <label class="field-label" for="m-join-pass">Passcode <span class="field-optional">(optional)</span></label>
+          <input type="text" id="m-join-pass" maxlength="32" autocomplete="off" spellcheck="false" />
+          <p class="hint">Leave it empty to watch only. With the passcode you can also make changes.</p>
+        </div>
+        ${shareWarning().replace(' Your own copy on this device is always kept.', '')}`,
+      onSave: () => joinShared(q('#m-join-code').value, q('#m-join-pass').value.trim()),
+    });
+    if (prefill) { const pass = q('#m-join-pass'); if (pass) pass.focus(); }
+  }
+
+  /** #join=CODE in the address: open the join box with the code filled in. */
+  function openJoinFromLink() {
+    const m = location.hash.match(/^#join=([A-Za-z0-9-]{4,12})$/);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    const code = Share.cleanCode(m[1]);
+    const existing = [...contexts.values()].find(c => c.share && c.share.code === code && !c.share.ended);
+    if (existing) { focusSession(existing); return; }
+    openJoinModal(code);
+  }
+
+  function focusSession(ctx) {
+    showView('sessions');
+    ctx.root.open = true;
+    ctx.root.scrollIntoView({ block: 'start' });
+  }
+
+  async function joinShared(rawCode, pass) {
+    const code = Share.cleanCode(rawCode);
+    if (!Share.isCode(code)) return 'Enter the 6-character session code.';
+    let res;
+    try {
+      res = pass ? await Share.checkPasscode(code, pass) : await Share.get(code, 0);
+    } catch (err) {
+      return NET_ERROR;
+    }
+    if (res.missing) return 'No shared session has that code. It may have been deleted after 24 hours without changes.';
+    if (res.locked) return lockedMessage();
+    if (res.denied) return 'Wrong passcode. Leave it empty to watch only.';
+    if (!res.state || !isValidSession(res.state)) return 'That shared session couldn’t be opened.';
+    const role = pass ? 'editor' : 'viewer';
+
+    // Already on this device: switch it to editing (if a passcode was given) and show it
+    const existing = [...contexts.values()].find(c => c.share && c.share.code === code && !c.share.ended);
+    if (existing) {
+      const sh = existing.share;
+      if (pass && sh.role === 'viewer') { sh.role = 'editor'; sh.pass = pass; }
+      sh.version = res.version;
+      sh.expiresAt = Date.parse(res.expires_at);
+      sh.dirty = false;
+      saveShare(existing);
+      applyRemote(existing, res.state, true);
+      setTimeout(() => focusSession(existing), 0);
+      return null;
+    }
+
+    const id = Storage.newId();
+    const share = { code, role, version: res.version, expiresAt: Date.parse(res.expires_at), dirty: false };
+    if (pass) share.pass = pass;
+    Storage.setPref(`share_${id}`, JSON.stringify(share)); // before the session, so other tabs see it as shared
+    const st = migrateSession(res.state);
+    st.phase = 'session';
+    applyingRemote = true;
+    try {
+      Storage.saveSession(id, st);
+      const ctx = addSessionToPage(id, st);
+      state = ctx.state;
+      ctx.syncedJson = JSON.stringify(st);
+      renderSession();
+      setTimeout(() => {
+        focusSession(ctx);
+        showToast(role === 'viewer' ? 'Joined. You’re watching this session live.' : 'Joined. You can make changes to this session.');
+      }, 0);
+    } finally {
+      applyingRemote = false;
+    }
+    return null;
+  }
+
+  function stopSharing(ctx) {
+    const sh = ctx.share;
+    if (!sh || !confirm('Stop sharing? The shared copy is deleted now, and others can no longer watch or edit it. Your copy here is kept.')) return;
+    Share.stop(sh.code, sh.pass).then(res => {
+      if (res.denied || res.locked) { showToast('Couldn’t stop sharing: the passcode wasn’t accepted.'); return; }
+      ctx.share = null;
+      ctx.syncedJson = null;
+      saveShare(ctx);
+      renderShareBar(ctx);
+      showToast('Sharing stopped. The shared copy was deleted.');
+    }, () => showToast(NET_ERROR));
+  }
+
+  function leaveShared(ctx) {
+    if (!confirm(`Remove "${ctx.state.name}" from this device? The shared session itself isn't affected.`)) return;
+    Storage.deleteSession(ctx.id);
+    removeSessionFromPage(ctx);
+    showToast('Removed from this device.');
+  }
+
+  function endShare(ctx) {
+    const sh = ctx.share;
+    if (!sh || sh.ended) return;
+    sh.ended = true;
+    sh.dirty = false;
+    clearTimeout(ctx.pushTimer);
+    saveShare(ctx);
+    renderShareBar(ctx);
+  }
+
+  // ---- keeping shared sessions in sync ----
+
+  /** persist() calls this before saving: send local changes of a shared session. */
+  function noteShareChange(ctx) {
+    const sh = ctx.share;
+    if (applyingRemote || !sh || sh.ended || sh.role === 'viewer') return;
+    const json = JSON.stringify(ctx.state);
+    if (json === ctx.syncedJson) return;
+    if (!sh.dirty) { sh.dirty = true; saveShare(ctx); }
+    schedulePush(ctx);
+  }
+
+  function schedulePush(ctx, delay = 600) {
+    clearTimeout(ctx.pushTimer);
+    ctx.pushTimer = setTimeout(() => pushShare(ctx), delay);
+  }
+
+  async function pushShare(ctx) {
+    const sh = ctx.share;
+    if (!sh || sh.ended || !sh.dirty || sh.role === 'viewer' || !contexts.has(ctx.id)) return;
+    if (ctx.pushing) { ctx.pushAgain = true; return; }
+    ctx.pushing = true;
+    const json = JSON.stringify(ctx.state);
+    let res;
+    try {
+      res = await Share.update(sh.code, sh.pass, JSON.parse(json), sh.version);
+    } catch (err) {
+      ctx.pushing = false;
+      if (!ctx.shareOffline) { ctx.shareOffline = true; renderShareBar(ctx); }
+      schedulePush(ctx, 5000); // try again soon
+      return;
+    }
+    ctx.pushing = false;
+    if (ctx.share !== sh || !contexts.has(ctx.id)) return;
+    ctx.shareOffline = false;
+    if (res.missing) { endShare(ctx); return; }
+    if (res.denied || res.locked) {
+      // The passcode stopped working (sharing was stopped and started again): watch only from now on
+      sh.role = 'viewer';
+      delete sh.pass;
+      sh.dirty = false;
+      saveShare(ctx);
+      renderShareBar(ctx);
+      showToast('The passcode no longer works, so this device can only watch now.');
+      return;
+    }
+    if (res.conflict) {
+      // Someone else saved first: show their version (this device's last change isn't kept)
+      sh.version = res.version;
+      sh.expiresAt = Date.parse(res.expires_at);
+      sh.dirty = false;
+      saveShare(ctx);
+      applyRemote(ctx, res.state, true);
+      showToast('Another organizer changed this session at the same moment. Their version is shown, so please check your last change.');
+      return;
+    }
+    sh.version = res.version;
+    sh.expiresAt = Date.parse(res.expires_at);
+    ctx.syncedJson = json;
+    sh.dirty = JSON.stringify(ctx.state) !== json;
+    saveShare(ctx);
+    renderShareBar(ctx);
+    if (sh.dirty || ctx.pushAgain) { ctx.pushAgain = false; schedulePush(ctx, 200); }
+  }
+
+  /** Show a newer copy from the server in this session (and save it on this device). */
+  function applyRemote(ctx, remote, force = false) {
+    if (!remote || !isValidSession(remote)) return;
+    const json = JSON.stringify(remote);
+    if (!force && json === ctx.lastRemoteJson) return;
+    ctx.lastRemoteJson = json;
+    // An editing pop-up for this session was made from the old data (info-only pop-ups can stay open)
+    if (modal && modal.ctx === ctx && modal.onSave) closeModal();
+    ctx.state = migrateSession(JSON.parse(json));
+    ctx.state.phase = 'session';
+    applyingRemote = true;
+    try {
+      activate(ctx);
+      state = ctx.state;
+      Storage.saveSession(ctx.id, state);
+      ctx.syncedJson = JSON.stringify(state);
+      renderSession();
+    } finally {
+      applyingRemote = false;
+    }
+  }
+
+  function startShareSync() {
+    setInterval(pollShares, SHARE_POLL_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollShares(); });
+    window.addEventListener('online', pollShares);
+    // Keep the "deleted in …" countdowns current
+    setInterval(() => contexts.forEach(ctx => { if (ctx.share && !ctx.share.ended) renderShareBar(ctx); }), 30000);
+    pollShares();
+  }
+
+  let polling = false;
+  async function pollShares() {
+    if (polling || document.hidden) return;
+    polling = true;
+    try {
+      for (const ctx of [...contexts.values()]) {
+        const sh = ctx.share;
+        if (!sh || sh.ended) continue;
+        if (sh.dirty) { if (!ctx.pushing) schedulePush(ctx, 0); continue; } // send ours first
+        if (ctx.pushing) continue;
+        if (modal && modal.ctx === ctx && modal.onSave) continue; // don't change the data under an open editing pop-up; check again after
+        let res;
+        try {
+          res = await Share.get(sh.code, sh.version);
+        } catch (err) {
+          if (!ctx.shareOffline) { ctx.shareOffline = true; renderShareBar(ctx); }
+          continue;
+        }
+        if (ctx.share !== sh || !contexts.has(ctx.id) || sh.dirty || ctx.pushing) continue;
+        ctx.shareOffline = false;
+        if (res.missing) { endShare(ctx); continue; }
+        sh.expiresAt = Date.parse(res.expires_at);
+        if (res.state && res.version > sh.version) {
+          sh.version = res.version;
+          saveShare(ctx);
+          applyRemote(ctx, res.state);
+        } else {
+          saveShare(ctx);
+          renderShareBar(ctx);
+        }
+      }
+    } finally {
+      polling = false;
+    }
   }
 
   // ---- history ----
