@@ -1,0 +1,4 @@
+# Local Apache (Laragon) only: show 404.html for addresses that don't exist, like GitHub Pages does,
+# so short shared-session links (pikolq.run.place.test/ABC123) open the join box here too.
+# GitHub Pages ignores this file.
+ErrorDocument 404 /404.html

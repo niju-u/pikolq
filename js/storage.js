@@ -101,6 +101,7 @@ const Storage = (() => {
     safe(() => localStorage.removeItem(`pbq_pref_voicerate_${id}`), undefined);
     safe(() => localStorage.removeItem(`pbq_pref_voicepitch_${id}`), undefined);
     safe(() => localStorage.removeItem(`pbq_pref_rank_${id}`), undefined);
+    safe(() => localStorage.removeItem(`pbq_pref_share_${id}`), undefined);
   }
 
   // ---------- setup draft ----------
@@ -139,9 +140,12 @@ const Storage = (() => {
   function setPref(name, value) {
     safe(() => localStorage.setItem(PREF_PREFIX + name, String(value)), undefined);
   }
+  function removePref(name) {
+    safe(() => localStorage.removeItem(PREF_PREFIX + name), undefined);
+  }
 
   return {
     newId, migrateLegacy, listSessions, saveSession, loadSession, deleteSession,
-    saveDraft, loadDraft, clearDraft, onChangedElsewhere, getPref, setPref,
+    saveDraft, loadDraft, clearDraft, onChangedElsewhere, getPref, setPref, removePref,
   };
 })();

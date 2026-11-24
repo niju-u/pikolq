@@ -24,8 +24,8 @@
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 })();
 </script>
-<link rel="stylesheet" href="css/style.css?v=119" />
-<link rel="stylesheet" href="css/pixel.css?v=180" />
+<link rel="stylesheet" href="css/style.css?v=120" />
+<link rel="stylesheet" href="css/pixel.css?v=189" />
 </head>
 <body>
 <script>
@@ -148,6 +148,8 @@
       <div class="sessions-toolbar-actions">
         <button type="button" class="btn btn-secondary btn-sm" id="btn-voice" aria-pressed="true" title="Automatically say the winners and score when a match is completed" hidden></button>
         <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-all">Collapse all</button>
+        <!-- Join someone else's shared session (code, plus passcode to edit) -->
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-join-session" hidden><span data-icon="link"></span>Join</button>
         <button type="button" class="btn btn-primary btn-sm" id="btn-new-session"><span data-icon="plus"></span>New Session</button>
         <!-- Hidden for now: Clear all sessions (trash icon) beside New Session
         <button type="button" class="btn btn-danger btn-sm btn-icon-only" id="btn-clear-all-top" title="Clear all sessions" aria-label="Clear all sessions"><span data-icon="trash"></span></button>
@@ -163,6 +165,7 @@
           <h2>Set up today’s open play</h2>
           <p>Choose players and courts, enter everyone’s name, then generate the queue.</p>
           <button type="button" class="btn btn-secondary btn-sm setup-back" id="btn-cancel-setup" hidden>Back to sessions</button>
+          <button type="button" class="link-btn setup-join" id="btn-join-setup" hidden><span data-icon="link"></span>Have a code? Join a shared session</button>
         </div>
 
         <!-- Left column: settings and Generate button -->
@@ -256,9 +259,12 @@
           </div>
           <div class="summary-chips session-head-chips" data-el="session-meta"></div>
           <button type="button" class="icon-btn session-head-rename" data-el="btn-rename" title="Rename session" aria-label="Rename session"><span data-icon="pencil"></span></button>
+          <button type="button" class="icon-btn session-head-share" data-el="btn-share" title="Share session" aria-label="Share session" hidden><span data-icon="share"></span></button>
           <!-- Who's on court, shown only while the session is collapsed -->
           <ul class="session-head-playing" data-el="head-playing"></ul>
         </div>
+        <!-- Shared session: code, who can edit, and when the shared copy is deleted -->
+        <div class="share-bar no-print" data-el="share-bar" hidden></div>
         <div class="view dashboard session-body" data-el="session-body">
 
           <!-- Watermark, only shown in the PDF -->
@@ -549,13 +555,15 @@
 
 <div class="toast no-print" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/icons.js?v=95"></script>
+<script src="js/icons.js?v=96"></script>
 <script src="js/scheduler.js?v=94"></script>
 <script src="js/queue.js?v=95"></script>
-<script src="js/storage.js?v=96"></script>
+<script src="js/storage.js?v=97"></script>
 <script src="js/session.js?v=94"></script>
 <script src="js/pdf.js?v=97"></script>
-<script src="js/app.js?v=145"></script>
+<script src="js/share-config.js?v=3"></script>
+<script src="js/share.js?v=3"></script>
+<script src="js/app.js?v=153"></script>
 <script src="js/site.js?v=102"></script>
 </body>
 </html>
